@@ -1,0 +1,17 @@
+.env.example
+.env
+.venv
+venv
+node_modules
+target
+dist
+.DS_Store
+*.log
+*.key
+*.json.bak
+*.seed
+/frontend/node_modules
+/wdk-service/node_modules
+/ml-api/venv
+/credagent_programs/target
+/credagent_programs/node_modules

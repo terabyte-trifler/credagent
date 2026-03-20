@@ -1,0 +1,21 @@
+[toolchain]
+package_manager = "npm"
+
+[features]
+resolution = true
+skip-lint = false
+
+[programs.devnet]
+agent_permissions = "57uCTUNFStnMEkGLQT869Qdo5fo9EAqPsp5dn5QWQUqG"
+credit_score_oracle = "4cDu7SCGMzs6etzjJTyUXNXSJ6eRz54cDikSngezabhE"
+lending_pool = "8tTaDNjoukk18eAZmxBrB9bo35i4yAAKTpQ3MqZiAoid"
+
+[registry]
+url = "https://api.apr.dev"
+
+[provider]
+cluster = "devnet"
+wallet = "~/.config/solana/id.json"
+
+[scripts]
+test = "anchor test"

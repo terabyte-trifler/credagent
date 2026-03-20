@@ -1,0 +1,15 @@
+{
+  "mcp_servers": [
+    {
+      "name": "credagent-wdk",
+      "command": "node",
+      "args": ["./wdk-service/src/index.js"]
+    }
+  ],
+  "skills": [
+    "./agent/skills/credit-assessment/SKILL.md",
+    "./agent/skills/lending-decision/SKILL.md",
+    "./agent/skills/collection-tracker/SKILL.md",
+    "./agent/skills/yield-optimizer/SKILL.md"
+  ]
+}

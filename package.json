@@ -1,0 +1,19 @@
+{
+  "name": "credagent",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "wdk-service"
+  ],
+  "scripts": {
+    "anchor:build": "anchor build",
+    "anchor:test": "anchor test",
+    "frontend:dev": "npm --prefix frontend run dev",
+    "wdk:test": "npm --prefix wdk-service test"
+  },
+  "devDependencies": {
+    "@coral-xyz/anchor": "^0.32.1",
+    "typescript": "^5.8.3"
+  }
+}

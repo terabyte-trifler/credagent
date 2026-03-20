@@ -1,0 +1,8 @@
+flask
+flask-cors
+gunicorn
+numpy
+pytest
+python-dotenv
+scikit-learn
+xgboost
