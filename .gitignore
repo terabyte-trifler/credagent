@@ -14,5 +14,9 @@ dist
 /wdk-service/node_modules
 /wdk-service/.test-tokens.env
 /ml-api/venv
+/ml-api/__pycache__/
+/ml-api/tests/__pycache__/
+/ml-api/.pytest_cache/
+/ml-api/models/
 /credagent_programs/target
 /credagent_programs/node_modules
