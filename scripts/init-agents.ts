@@ -1,16 +1,17 @@
 /**
  * init-agents.ts — Register 4 CredAgent agents on-chain
  *
- * Creates wallets via WDK and registers each agent in the
+ * Generates agent keypairs locally and registers each agent in the
  * AgentPermissions program with appropriate tier + daily limit.
  *
  * Usage: npx ts-node scripts/init-agents.ts
  */
 
 import * as anchor from "@coral-xyz/anchor";
-import { Keypair, LAMPORTS_PER_SOL, SystemProgram, Transaction } from "@solana/web3.js";
-import fs from "fs";
-import path from "path";
+import { BN } from "@coral-xyz/anchor";
+import { Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction } from "@solana/web3.js";
+import * as fs from "fs";
+import * as path from "path";
 
 const G = '\x1b[32m', C = '\x1b[36m', N = '\x1b[0m';
 
@@ -22,7 +23,7 @@ interface AgentConfig {
 }
 
 const AGENTS: AgentConfig[] = [
-  { name: 'credit-agent',     role: 0, tier: 1, dailyLimitUsdt: 0 },        // Oracle, Operate
+  { name: 'credit-agent',     role: 0, tier: 1, dailyLimitUsdt: 1 },        // Oracle, Operate
   { name: 'lending-agent',    role: 1, tier: 2, dailyLimitUsdt: 10000 },     // Lending, Manage
   { name: 'collection-agent', role: 2, tier: 1, dailyLimitUsdt: 1000 },      // Collection, Operate
   { name: 'yield-agent',      role: 3, tier: 2, dailyLimitUsdt: 5000 },      // Yield, Manage
@@ -66,8 +67,31 @@ async function main() {
 
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
+  const workspaceRoot = process.cwd();
+  const idl = JSON.parse(
+    fs.readFileSync(path.join(workspaceRoot, "target/idl/agent_permissions.json"), "utf8"),
+  );
+  const programId = new PublicKey(idl.address);
+  const permProgram = new anchor.Program(idl as anchor.Idl, provider) as any;
+  const [permStatePda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("perm_state")],
+    programId,
+  );
+
+  const existingPermState = await permProgram.account.permState.fetchNullable(permStatePda);
+  if (!existingPermState) {
+    console.log(`${C}Initializing AgentPermissions state on-chain...${N}`);
+    await permProgram.methods.initialize().accounts({
+      permState: permStatePda,
+      admin: provider.wallet.publicKey,
+      systemProgram: SystemProgram.programId,
+    }).rpc();
+    console.log(`${G}[✓]${N} perm_state initialized: ${permStatePda.toBase58().slice(0, 20)}...\n`);
+  }
 
   const keypairs: Record<string, Keypair> = {};
+  let registered = 0;
+  let skipped = 0;
 
   for (const agent of AGENTS) {
     const kp = Keypair.generate();
@@ -85,21 +109,52 @@ async function main() {
     console.log(`    Funding: ${funding.sol.toFixed(2)} SOL via ${funding.method}`);
     console.log();
 
-    // In production:
-    // await permProgram.methods.registerAgent(
-    //   { [ROLE_NAMES[agent.role].toLowerCase()]: {} },
-    //   { [TIER_NAMES[agent.tier].toLowerCase()]: {} },
-    //   new BN(agent.dailyLimitUsdt * 1_000_000)
-    // ).accounts({
-    //   permState: permStatePda,
-    //   agentIdentity: agentPda,
-    //   agentWallet: kp.publicKey,
-    //   admin: provider.wallet.publicKey,
-    // }).rpc();
+    const [agentPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("agent_id"), kp.publicKey.toBuffer()],
+      programId,
+    );
+
+    const existingIdentity = await permProgram.account.agentIdentity.fetchNullable(agentPda);
+    if (existingIdentity) {
+      skipped++;
+      console.log(`    On-chain: already registered at ${agentPda.toBase58().slice(0, 20)}...`);
+      console.log();
+      continue;
+    }
+
+    const roleArg =
+      agent.role === 0 ? { oracle: {} } :
+      agent.role === 1 ? { lending: {} } :
+      agent.role === 2 ? { collection: {} } :
+      { yield: {} };
+
+    const tierArg =
+      agent.tier === 0 ? { read: {} } :
+      agent.tier === 1 ? { operate: {} } :
+      agent.tier === 2 ? { manage: {} } :
+      { admin: {} };
+
+    await permProgram.methods.registerAgent(
+      roleArg,
+      tierArg,
+      new BN(agent.dailyLimitUsdt * 1_000_000),
+    ).accounts({
+      permState: permStatePda,
+      agentIdentity: agentPda,
+      agentWallet: kp.publicKey,
+      admin: provider.wallet.publicKey,
+      systemProgram: SystemProgram.programId,
+    }).rpc();
+
+    registered++;
+    console.log(`    On-chain: registered at ${agentPda.toBase58().slice(0, 20)}...`);
+    console.log();
   }
 
   console.log(`${C}━━━ Summary ━━━${N}`);
-  console.log(`  Agents registered: ${AGENTS.length}`);
+  console.log(`  Agents processed: ${AGENTS.length}`);
+  console.log(`  Newly registered on-chain: ${registered}`);
+  console.log(`  Already registered: ${skipped}`);
   console.log(`  Tier 2 (Manage): ${AGENTS.filter(a => a.tier === 2).length}`);
   console.log(`  Tier 1 (Operate): ${AGENTS.filter(a => a.tier === 1).length}`);
   console.log(`  Tier 3 (Admin): 0 (human-only, via rotation flow)\n`);

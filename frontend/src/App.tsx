@@ -94,13 +94,13 @@ export default function App() {
             {/* Network badge */}
             <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-surface-2 border border-white/[0.04]">
               <span className="w-1.5 h-1.5 rounded-full bg-cred-500 animate-pulse" />
-              <span className="text-[10px] text-gray-400 font-mono">devnet</span>
+                <span className="text-[10px] text-gray-400 font-mono">devnet / demo ui</span>
             </div>
 
             {/* Agent count */}
             <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-surface-2 border border-white/[0.04]">
               <span className="text-[10px] text-gray-400">
-                {MOCK_AGENTS.filter(a => a.status === 'active').length} agents live
+                {MOCK_AGENTS.filter(a => a.status === 'active').length} demo agents
               </span>
             </div>
 
@@ -121,7 +121,7 @@ export default function App() {
 
         {/* T5.1: Agent status */}
         <section>
-          <SectionLabel>Agent status</SectionLabel>
+          <SectionLabel>Agent status (demo)</SectionLabel>
           <ErrorBoundary>
             <AgentStatus agents={MOCK_AGENTS} />
           </ErrorBoundary>
@@ -138,13 +138,13 @@ export default function App() {
         {/* T5.3 + T5.5: Loans + Negotiation (side by side) */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 dashboard-grid">
           <section>
-            <SectionLabel>Active loans</SectionLabel>
+          <SectionLabel>Active loans (demo)</SectionLabel>
             <ErrorBoundary>
               <LoanManager loans={MOCK_LOANS} />
             </ErrorBoundary>
           </section>
           <section>
-            <SectionLabel>Loan negotiation</SectionLabel>
+          <SectionLabel>Loan negotiation (demo)</SectionLabel>
             <ErrorBoundary>
               <NegotiationChat messages={allMessages} onSend={handleChatSend}
                 loanTerms={{ rateBps: 650, durationDays: 60, collateral: '1.5 XAUT' }} />
@@ -154,7 +154,7 @@ export default function App() {
 
         {/* T5.4: Pool dashboard */}
         <section>
-          <SectionLabel>Pool analytics</SectionLabel>
+          <SectionLabel>Pool analytics (demo)</SectionLabel>
           <ErrorBoundary>
             <PoolDashboard pool={MOCK_POOL} />
           </ErrorBoundary>
@@ -162,7 +162,7 @@ export default function App() {
 
         {/* T5.6: Decision log */}
         <section>
-          <SectionLabel>Agent decisions</SectionLabel>
+          <SectionLabel>Agent decisions (demo)</SectionLabel>
           <ErrorBoundary>
             <DecisionLog decisions={MOCK_DECISIONS} />
           </ErrorBoundary>
@@ -178,7 +178,7 @@ export default function App() {
           <div className="flex items-center gap-3 text-[10px] text-gray-700">
             <span>7 payment primitives</span>
             <span>·</span>
-            <span>4 autonomous agents</span>
+            <span>4 autonomous agents (demo view)</span>
             <span>·</span>
             <span>XGBoost ML scoring</span>
           </div>

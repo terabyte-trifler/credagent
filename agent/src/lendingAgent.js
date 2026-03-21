@@ -224,6 +224,7 @@ export class LendingDecisionAgent {
       steps.disburse = await this.#mcpBridge.executeTool('conditional_disburse', {
         agent_id: 'lending-agent',
         borrower: borrowerAddress,
+        loan_id: loanId,
         principal: String(Math.ceil(offer.principal * 1_000_000)),
         interest_rate_bps: offer.rateBps,
         duration_days: offer.durationDays,

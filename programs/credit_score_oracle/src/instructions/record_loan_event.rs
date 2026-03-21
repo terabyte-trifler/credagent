@@ -11,13 +11,6 @@ pub struct RecordLoanEvent<'info> {
     )]
     pub oracle_state: Account<'info, OracleState>,
     #[account(
-        seeds = [ORACLE_AUTH_SEED, authority.key().as_ref()],
-        bump = oracle_authority.bump,
-        constraint = oracle_authority.agent == authority.key() @ OracleError::OracleNotAuthorized,
-        constraint = oracle_authority.is_active @ OracleError::OracleDeactivated,
-    )]
-    pub oracle_authority: Account<'info, OracleAuthority>,
-    #[account(
         init_if_needed,
         payer = authority,
         space = 8 + CreditHistory::INIT_SPACE,
@@ -27,8 +20,9 @@ pub struct RecordLoanEvent<'info> {
     pub credit_history: Account<'info, CreditHistory>,
     /// CHECK: Borrower whose history is updated.
     pub borrower: UncheckedAccount<'info>,
-    // AUDIT: Restricted to explicitly authorized oracle authority records.
-    // This removes direct admin mutation of borrower histories.
+    // AUDIT: Credit-history mutation is intentionally separated from generic
+    // oracle score publication. Only the dedicated history_authority may sign
+    // these writes until a direct lending-program CPI path is implemented.
     #[account(mut)]
     pub authority: Signer<'info>,
     pub system_program: Program<'info, System>,
@@ -36,6 +30,10 @@ pub struct RecordLoanEvent<'info> {
 
 pub fn handler_issued(ctx: Context<RecordLoanEvent>, amount: u64) -> Result<()> {
     require!(!ctx.accounts.oracle_state.is_paused, OracleError::OraclePaused);
+    require!(
+        ctx.accounts.oracle_state.history_authority == ctx.accounts.authority.key(),
+        OracleError::HistoryUpdateRestricted
+    );
     let h = &mut ctx.accounts.credit_history;
     let now = Clock::get()?.unix_timestamp;
 
@@ -57,6 +55,10 @@ pub fn handler_issued(ctx: Context<RecordLoanEvent>, amount: u64) -> Result<()> 
 
 pub fn handler_repaid(ctx: Context<RecordLoanEvent>, amount: u64) -> Result<()> {
     require!(!ctx.accounts.oracle_state.is_paused, OracleError::OraclePaused);
+    require!(
+        ctx.accounts.oracle_state.history_authority == ctx.accounts.authority.key(),
+        OracleError::HistoryUpdateRestricted
+    );
     let h = &mut ctx.accounts.credit_history;
     h.repaid_loans = h.repaid_loans.checked_add(1).ok_or(OracleError::ArithmeticOverflow)?;
     h.total_repaid = h.total_repaid.checked_add(amount).ok_or(OracleError::ArithmeticOverflow)?;
@@ -71,6 +73,10 @@ pub fn handler_repaid(ctx: Context<RecordLoanEvent>, amount: u64) -> Result<()> 
 
 pub fn handler_defaulted(ctx: Context<RecordLoanEvent>) -> Result<()> {
     require!(!ctx.accounts.oracle_state.is_paused, OracleError::OraclePaused);
+    require!(
+        ctx.accounts.oracle_state.history_authority == ctx.accounts.authority.key(),
+        OracleError::HistoryUpdateRestricted
+    );
     let h = &mut ctx.accounts.credit_history;
     h.defaulted_loans = h.defaulted_loans.checked_add(1).ok_or(OracleError::ArithmeticOverflow)?;
     h.last_activity = Clock::get()?.unix_timestamp;

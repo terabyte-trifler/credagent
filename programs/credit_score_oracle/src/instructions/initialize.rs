@@ -26,6 +26,7 @@ pub fn handler(ctx: Context<Initialize>, validity_secs: i64) -> Result<()> {
 
     let state = &mut ctx.accounts.oracle_state;
     state.admin = ctx.accounts.admin.key();
+    state.history_authority = ctx.accounts.admin.key();
     state.score_validity_secs = validity_secs;
     state.is_paused = false;
     state.total_scores_issued = 0;

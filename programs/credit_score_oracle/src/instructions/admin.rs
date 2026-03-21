@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use crate::state::*;
 use crate::errors::OracleError;
-use crate::events::{OraclePaused, OracleUnpaused, OracleRoleRevoked};
+use crate::events::{HistoryAuthorityUpdated, OraclePaused, OracleRoleRevoked, OracleUnpaused};
 
 #[derive(Accounts)]
 pub struct AdminAction<'info> {
@@ -28,6 +28,20 @@ pub fn handler_set_validity(ctx: Context<AdminAction>, new_period: i64) -> Resul
         OracleError::InvalidValidityPeriod
     );
     ctx.accounts.oracle_state.score_validity_secs = new_period;
+    Ok(())
+}
+
+pub fn handler_set_history_authority(
+    ctx: Context<AdminAction>,
+    new_authority: Pubkey,
+) -> Result<()> {
+    require!(new_authority != Pubkey::default(), OracleError::InvalidHistoryAuthority);
+    ctx.accounts.oracle_state.history_authority = new_authority;
+    emit!(HistoryAuthorityUpdated {
+        admin: ctx.accounts.admin.key(),
+        history_authority: new_authority,
+        timestamp: Clock::get()?.unix_timestamp,
+    });
     Ok(())
 }
 

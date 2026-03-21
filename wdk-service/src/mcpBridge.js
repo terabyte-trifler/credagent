@@ -24,6 +24,10 @@ import { validate } from './safetyLayer.js';
 import { AuditLog } from './auditLog.js';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import fs from 'node:fs';
+import * as anchor from '@coral-xyz/anchor';
+import { PublicKey, Connection } from '@solana/web3.js';
+import { Token, TOKEN_PROGRAM_ID } from '@solana/spl-token';
 
 const DEFAULT_ML_API = 'http://localhost:5001';
 const DEFAULT_RATE_LIMIT = 200;
@@ -40,6 +44,7 @@ export class MCPBridge {
   #stateDir;
   #loanCounterPath;
   #loanCounterMutex = Promise.resolve();
+  #programCache = new Map();
 
   /**
    * @param {object} services
@@ -186,13 +191,13 @@ export class MCPBridge {
 
       // ── PAYMENT PRIMITIVES ──
       case 'lock_collateral':
-        return this.#buildProgramCall('lock_collateral', params);
+        return this.#submitLockCollateral(params);
 
       case 'conditional_disburse':
-        return this.#buildProgramCall('conditional_disburse', params);
+        return this.#submitConditionalDisburse(params);
 
       case 'create_installment_schedule':
-        return this.#buildProgramCall('create_schedule', params);
+        return this.#submitCreateSchedule(params);
 
       case 'pull_installment':
         return this.#buildProgramCall('pull_installment', params);
@@ -201,13 +206,13 @@ export class MCPBridge {
         return this.#reserveNextLoanId();
 
       case 'push_score_onchain':
-        return this.#buildProgramCall('update_score', params);
+        return this.#submitUpdateScore(params);
 
       case 'mark_default':
-        return this.#buildProgramCall('mark_default', params);
+        return this.#submitMarkDefault(params);
 
       case 'liquidate_escrow':
-        return this.#buildProgramCall('liquidate_escrow', params);
+        return this.#submitLiquidateEscrow(params);
 
       case 'record_loan_defaulted':
         return this.#buildProgramCall('record_loan_defaulted', params);
@@ -272,10 +277,11 @@ export class MCPBridge {
 
   /**
    * Build a Solana program instruction call.
-   * In production, this constructs an Anchor instruction and signs via WDK.
-   * For hackathon demo, returns structured instruction data for the agent to submit.
    *
-   * AUDIT: Instruction data is deterministic and verifiable.
+   * IMPORTANT:
+   * This path DOES NOT submit a transaction yet. It returns deterministic,
+   * reviewable instruction metadata only. Callers must not treat this as an
+   * on-chain confirmation.
    */
   async #buildProgramCall(instruction, params) {
     const agentAddress = this.#walletService.getAddress(params.agent_id);
@@ -290,8 +296,256 @@ export class MCPBridge {
       accounts: this.#deriveAccounts(instruction, params),
       args: this.#cleanArgs(instruction, params),
       signer: agentAddress,
-      status: 'built',
-      note: 'Submit via anchor client with WDK signing',
+      status: 'instruction_built',
+      submitted: false,
+      confirmed: false,
+      execution: 'local-build-only',
+      note: 'Instruction built locally only; submit separately via Anchor/Web3 + signer',
+    };
+  }
+
+  async #submitUpdateScore(params) {
+    const signer = await this.#getAnchorWallet(params.agent_id);
+    const program = this.#getProgram('credit_score_oracle', signer);
+    const borrower = new PublicKey(params.borrower);
+    const [oracleState] = PublicKey.findProgramAddressSync([Buffer.from('oracle_state')], program.programId);
+    const [oracleAuthority] = PublicKey.findProgramAddressSync(
+      [Buffer.from('oracle_auth'), signer.publicKey.toBuffer()],
+      program.programId,
+    );
+    const [creditScore] = PublicKey.findProgramAddressSync(
+      [Buffer.from('credit_score'), borrower.toBuffer()],
+      program.programId,
+    );
+
+    const txSig = await program.methods.updateScore(
+      params.score,
+      params.confidence,
+      this.#hexToBytes32(params.model_hash),
+      this.#hexToBytes32(params.zk_proof_hash),
+    ).accounts({
+      oracle_state: oracleState,
+      oracle_authority: oracleAuthority,
+      credit_score: creditScore,
+      borrower,
+      oracle_agent: signer.publicKey,
+      system_program: anchor.web3.SystemProgram.programId,
+    }).signers([]).rpc();
+
+    return {
+      instruction: 'update_score',
+      program: 'credit_score_oracle',
+      txHash: txSig,
+      submitted: true,
+      confirmed: true,
+    };
+  }
+
+  async #submitConditionalDisburse(params) {
+    const signer = await this.#getAnchorWallet(params.agent_id);
+    const program = this.#getProgram('lending_pool', signer);
+    const borrower = new PublicKey(params.borrower);
+    const tokenMint = new PublicKey(this.#requireEnv('MOCK_USDT_MINT'));
+    const creditOracleId = this.#getProgram('credit_score_oracle').programId;
+    const agentPermId = this.#getProgram('agent_permissions').programId;
+    const [poolState] = PublicKey.findProgramAddressSync([Buffer.from('pool'), tokenMint.toBuffer()], program.programId);
+    const [poolVault] = PublicKey.findProgramAddressSync([Buffer.from('pool_vault'), tokenMint.toBuffer()], program.programId);
+    const [creditScore] = PublicKey.findProgramAddressSync([Buffer.from('credit_score'), borrower.toBuffer()], creditOracleId);
+    const loanIdBn = new anchor.BN(params.loan_id);
+    const loanSeed = Buffer.alloc(8);
+    loanSeed.writeBigUInt64LE(BigInt(params.loan_id));
+    const [escrowState] = PublicKey.findProgramAddressSync([Buffer.from('escrow'), loanSeed], program.programId);
+    const [loan] = PublicKey.findProgramAddressSync([Buffer.from('loan'), poolState.toBuffer(), loanSeed], program.programId);
+    const borrowerAta = await Token.getAssociatedTokenAddress(undefined, TOKEN_PROGRAM_ID, tokenMint, borrower);
+    const [permState] = PublicKey.findProgramAddressSync([Buffer.from('perm_state')], agentPermId);
+    const [agentIdentity] = PublicKey.findProgramAddressSync([Buffer.from('agent_id'), signer.publicKey.toBuffer()], agentPermId);
+
+    const txSig = await program.methods.conditionalDisburse(
+      new anchor.BN(params.principal),
+      params.interest_rate_bps,
+      params.duration_days,
+      this.#hexToBytes32(params.decision_hash),
+    ).accounts({
+      pool_state: poolState,
+      pool_vault: poolVault,
+      credit_score_account: creditScore,
+      escrow_state: escrowState,
+      loan,
+      borrower_ata: borrowerAta,
+      borrower,
+      lending_agent: signer.publicKey,
+      perm_state: permState,
+      agent_identity: agentIdentity,
+      credit_oracle_program: creditOracleId,
+      agent_permissions_program: agentPermId,
+      system_program: anchor.web3.SystemProgram.programId,
+      token_program: TOKEN_PROGRAM_ID,
+    }).signers([]).rpc();
+
+    return {
+      instruction: 'conditional_disburse',
+      program: 'lending_pool',
+      txHash: txSig,
+      submitted: true,
+      confirmed: true,
+    };
+  }
+
+  async #submitLockCollateral(params) {
+    const borrowerAgentId =
+      params.borrower_agent_id ||
+      this.#walletService.getAgentIdByAddress?.(params.borrower);
+
+    if (!borrowerAgentId) {
+      return this.#buildProgramCall('lock_collateral', {
+        ...params,
+        note: 'Borrower signer unavailable in WDK wallet service',
+      });
+    }
+
+    const signer = await this.#getAnchorWallet(borrowerAgentId);
+    const program = this.#getProgram('lending_pool', signer);
+    const tokenMint = new PublicKey(this.#requireEnv('MOCK_USDT_MINT'));
+    const collateralMint = new PublicKey(params.collateral_mint);
+    const [poolState] = PublicKey.findProgramAddressSync([Buffer.from('pool'), tokenMint.toBuffer()], program.programId);
+    const loanSeed = Buffer.alloc(8);
+    loanSeed.writeBigUInt64LE(BigInt(params.loan_id));
+    const [escrowState] = PublicKey.findProgramAddressSync([Buffer.from('escrow'), loanSeed], program.programId);
+    const [escrowVault] = PublicKey.findProgramAddressSync([Buffer.from('escrow_vault'), loanSeed], program.programId);
+    const borrower = new PublicKey(params.borrower);
+    const borrowerAta = await Token.getAssociatedTokenAddress(undefined, TOKEN_PROGRAM_ID, collateralMint, borrower);
+
+    const txSig = await program.methods.lockCollateral(
+      new anchor.BN(params.loan_id),
+      new anchor.BN(params.amount),
+    ).accounts({
+      pool_state: poolState,
+      escrow_state: escrowState,
+      escrow_vault: escrowVault,
+      collateral_mint: collateralMint,
+      borrower_ata: borrowerAta,
+      borrower,
+      system_program: anchor.web3.SystemProgram.programId,
+      token_program: TOKEN_PROGRAM_ID,
+      rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+    }).signers([]).rpc();
+
+    return {
+      instruction: 'lock_collateral',
+      program: 'lending_pool',
+      txHash: txSig,
+      submitted: true,
+      confirmed: true,
+      borrowerSigner: borrowerAgentId,
+    };
+  }
+
+  async #submitCreateSchedule(params) {
+    const signer = await this.#getAnchorWallet(params.agent_id);
+    const program = this.#getProgram('lending_pool', signer);
+    const tokenMint = new PublicKey(this.#requireEnv('MOCK_USDT_MINT'));
+    const [poolState] = PublicKey.findProgramAddressSync([Buffer.from('pool'), tokenMint.toBuffer()], program.programId);
+    const loanSeed = Buffer.alloc(8);
+    loanSeed.writeBigUInt64LE(BigInt(params.loan_id));
+    const [loan] = PublicKey.findProgramAddressSync([Buffer.from('loan'), poolState.toBuffer(), loanSeed], program.programId);
+    const [schedule] = PublicKey.findProgramAddressSync([Buffer.from('schedule'), loanSeed], program.programId);
+    const collectionAgent = new PublicKey(params.collection_agent_address);
+
+    const txSig = await program.methods.createSchedule(
+      params.num_installments,
+      new anchor.BN(params.interval_seconds),
+    ).accounts({
+      loan,
+      schedule,
+      collection_agent: collectionAgent,
+      lending_agent: signer.publicKey,
+      system_program: anchor.web3.SystemProgram.programId,
+    }).signers([]).rpc();
+
+    return {
+      instruction: 'create_schedule',
+      program: 'lending_pool',
+      txHash: txSig,
+      submitted: true,
+      confirmed: true,
+    };
+  }
+
+  async #submitMarkDefault(params) {
+    const signer = await this.#getAnchorWallet(params.agent_id);
+    const program = this.#getProgram('lending_pool', signer);
+    const tokenMint = new PublicKey(this.#requireEnv('MOCK_USDT_MINT'));
+    const [poolState] = PublicKey.findProgramAddressSync([Buffer.from('pool'), tokenMint.toBuffer()], program.programId);
+    const loanSeed = Buffer.alloc(8);
+    loanSeed.writeBigUInt64LE(BigInt(params.loan_id));
+    const [loan] = PublicKey.findProgramAddressSync([Buffer.from('loan'), poolState.toBuffer(), loanSeed], program.programId);
+
+    const txSig = await program.methods.markDefault().accounts({
+      pool_state: poolState,
+      loan,
+      caller: signer.publicKey,
+    }).signers([]).rpc();
+
+    return {
+      instruction: 'mark_default',
+      program: 'lending_pool',
+      txHash: txSig,
+      submitted: true,
+      confirmed: true,
+    };
+  }
+
+  async #submitLiquidateEscrow(params) {
+    const liquidationRecipient =
+      params.liquidation_recipient ||
+      process.env.LIQUIDATION_RECIPIENT_ATA ||
+      process.env.DEPLOYER_XAUT_ATA;
+
+    if (!liquidationRecipient) {
+      return this.#buildProgramCall('liquidate_escrow', {
+        ...params,
+        note: 'No liquidation recipient configured for collateral mint',
+      });
+    }
+
+    const signer = await this.#getAnchorWallet(params.agent_id);
+    const program = this.#getProgram('lending_pool', signer);
+    const tokenMint = new PublicKey(this.#requireEnv('MOCK_USDT_MINT'));
+    const [poolState] = PublicKey.findProgramAddressSync([Buffer.from('pool'), tokenMint.toBuffer()], program.programId);
+    const loanSeed = Buffer.alloc(8);
+    loanSeed.writeBigUInt64LE(BigInt(params.loan_id));
+    const [loan] = PublicKey.findProgramAddressSync([Buffer.from('loan'), poolState.toBuffer(), loanSeed], program.programId);
+    const [escrowState] = PublicKey.findProgramAddressSync([Buffer.from('escrow'), loanSeed], program.programId);
+    const [escrowVault] = PublicKey.findProgramAddressSync([Buffer.from('escrow_vault'), loanSeed], program.programId);
+    const liquidationRecipientPk = new PublicKey(liquidationRecipient);
+
+    const escrowVaultInfo = await program.provider.connection.getParsedAccountInfo(escrowVault, 'confirmed');
+    const recipientInfo = await program.provider.connection.getParsedAccountInfo(liquidationRecipientPk, 'confirmed');
+    const escrowMint = escrowVaultInfo.value?.data?.parsed?.info?.mint;
+    const recipientMint = recipientInfo.value?.data?.parsed?.info?.mint;
+
+    if (!escrowMint || !recipientMint) {
+      throw new Error('INVALID_LIQUIDATION_RECIPIENT: unable to inspect token account mint');
+    }
+    if (escrowMint !== recipientMint) {
+      throw new Error('INVALID_LIQUIDATION_RECIPIENT: token mint mismatch');
+    }
+
+    const txSig = await program.methods.liquidateEscrow().accounts({
+      loan,
+      escrow_state: escrowState,
+      escrow_vault: escrowVault,
+      liquidation_recipient: liquidationRecipientPk,
+      payer: signer.publicKey,
+      token_program: TOKEN_PROGRAM_ID,
+    }).signers([]).rpc();
+
+    return {
+      instruction: 'liquidate_escrow',
+      program: 'lending_pool',
+      txHash: txSig,
+      submitted: true,
+      confirmed: true,
     };
   }
 
@@ -346,6 +600,14 @@ export class MCPBridge {
   }
 
   async #reserveNextLoanId() {
+    try {
+      const program = this.#getProgram('lending_pool');
+      const tokenMint = new PublicKey(this.#requireEnv('MOCK_USDT_MINT'));
+      const [poolState] = PublicKey.findProgramAddressSync([Buffer.from('pool'), tokenMint.toBuffer()], program.programId);
+      const pool = await program.account.poolState.fetch(poolState);
+      return { loan_id: Number(pool.nextLoanId ?? pool.next_loan_id) };
+    } catch {}
+
     this.#loanCounterMutex = this.#loanCounterMutex.then(async () => {
       await mkdir(this.#stateDir, { recursive: true });
       let nextLoanId = 1;
@@ -364,6 +626,61 @@ export class MCPBridge {
 
     const loanId = await this.#loanCounterMutex;
     return { loan_id: loanId };
+  }
+
+  async #getAnchorWallet(agentId) {
+    const account = this.#walletService.getAccount(agentId);
+    const address = new PublicKey(this.#walletService.getAddress(agentId));
+    return {
+      publicKey: address,
+      signTransaction: (tx) => account.signTransaction(tx),
+      signAllTransactions: async (txs) => Promise.all(txs.map((tx) => account.signTransaction(tx))),
+    };
+  }
+
+  #getProgram(name, walletOverride = null) {
+    let cached = this.#programCache.get(name);
+    if (!cached) {
+      const root = this.#resolveWorkspaceRoot();
+      const idlPath = path.join(root, 'target', 'idl', `${name}.json`);
+      const idl = JSON.parse(fs.readFileSync(idlPath, 'utf8'));
+      cached = { idl };
+      this.#programCache.set(name, cached);
+    }
+
+    const wallet = walletOverride || {
+      publicKey: new PublicKey('11111111111111111111111111111111'),
+      signTransaction: async (tx) => tx,
+      signAllTransactions: async (txs) => txs,
+    };
+    const provider = new anchor.AnchorProvider(
+      new Connection(this.#walletService.getRpcUrl(), 'confirmed'),
+      wallet,
+      { commitment: 'confirmed' },
+    );
+    return new anchor.Program(cached.idl, provider);
+  }
+
+  #resolveWorkspaceRoot() {
+    const cwd = process.cwd();
+    const direct = path.join(cwd, 'target', 'idl');
+    if (fs.existsSync(direct)) return cwd;
+    const parent = path.resolve(cwd, '..');
+    if (fs.existsSync(path.join(parent, 'target', 'idl'))) return parent;
+    return cwd;
+  }
+
+  #requireEnv(name) {
+    const value = process.env[name];
+    if (!value) throw new Error(`MISSING_ENV: ${name}`);
+    return value;
+  }
+
+  #hexToBytes32(hex) {
+    if (!/^[0-9a-f]{64}$/i.test(hex)) {
+      throw new Error('INVALID_HEX32');
+    }
+    return Array.from(Buffer.from(hex, 'hex'));
   }
 }
 

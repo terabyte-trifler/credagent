@@ -36,6 +36,7 @@ export interface PoolState {
   totalDeposited: number; totalBorrowed: number; utilization: number;
   interestEarned: number; activeLoans: number; defaultRate: number;
   baseRateBps: number;
+  source?: 'demo' | 'onchain';
 }
 
 export interface Decision {
@@ -67,6 +68,7 @@ export const MOCK_LOANS: Loan[] = [
 export const MOCK_POOL: PoolState = {
   totalDeposited: 50000, totalBorrowed: 12000, utilization: 24,
   interestEarned: 340, activeLoans: 3, defaultRate: 1.2, baseRateBps: 650,
+  source: 'demo',
 };
 
 export const MOCK_POOL_HISTORY = Array.from({ length: 30 }, (_, i) => ({

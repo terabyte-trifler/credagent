@@ -51,6 +51,8 @@ describe('MCP bridge', () => {
   let bridge;
 
   beforeEach(() => {
+    delete process.env.LIQUIDATION_RECIPIENT_ATA;
+    delete process.env.DEPLOYER_XAUT_ATA;
     walletService = {
       createAgentWallet: jest.fn().mockResolvedValue({ agentId: 'credit-agent', address: '1'.repeat(32), chain: 'solana' }),
       getSolBalance: jest.fn().mockResolvedValue({ token: 'SOL', lamports: '5000000000', sol: '5.000000000' }),
@@ -67,6 +69,8 @@ describe('MCP bridge', () => {
       sendSol: jest.fn().mockResolvedValue({ txHash: 'abc123', fee: '5000' }),
       sendToken: jest.fn().mockResolvedValue({ txHash: 'def456', fee: '5000' }),
       getAddress: jest.fn().mockReturnValue('1'.repeat(32)),
+      getAgentIdByAddress: jest.fn().mockReturnValue(null),
+      getRpcUrl: jest.fn().mockReturnValue('https://api.devnet.solana.com'),
     };
     bridgeService = {
       isReady: true,
@@ -139,6 +143,39 @@ describe('MCP bridge', () => {
     await expect(bridge.executeTool('create_wallet', {})).resolves.toMatchObject({
       success: false,
       error: expect.stringContaining('MISSING_FIELD'),
+    });
+  });
+
+  test('lock_collateral falls back to explicit build-only mode when borrower signer is unavailable', async () => {
+    await expect(bridge.executeTool('lock_collateral', {
+      agent_id: 'lending-agent',
+      loan_id: 7,
+      borrower: '11111111111111111111111111111111',
+      collateral_mint: '11111111111111111111111111111111',
+      amount: '1000',
+    })).resolves.toMatchObject({
+      success: true,
+      result: {
+        instruction: 'lock_collateral',
+        status: 'instruction_built',
+        submitted: false,
+        confirmed: false,
+      },
+    });
+  });
+
+  test('liquidate_escrow falls back to build-only mode when no recipient token account is configured', async () => {
+    await expect(bridge.executeTool('liquidate_escrow', {
+      agent_id: 'collection-agent',
+      loan_id: 9,
+    })).resolves.toMatchObject({
+      success: true,
+      result: {
+        instruction: 'liquidate_escrow',
+        status: 'instruction_built',
+        submitted: false,
+        confirmed: false,
+      },
     });
   });
 

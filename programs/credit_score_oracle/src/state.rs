@@ -33,6 +33,7 @@ pub const MAX_BATCH_SIZE: usize = 20;
 #[derive(InitSpace)]
 pub struct OracleState {
     pub admin: Pubkey,
+    pub history_authority: Pubkey,
     pub score_validity_secs: i64,
     pub is_paused: bool,
     pub total_scores_issued: u64,

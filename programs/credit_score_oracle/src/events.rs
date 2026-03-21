@@ -57,3 +57,10 @@ pub struct OracleUnpaused {
     pub admin: Pubkey,
     pub timestamp: i64,
 }
+
+#[event]
+pub struct HistoryAuthorityUpdated {
+    pub admin: Pubkey,
+    pub history_authority: Pubkey,
+    pub timestamp: i64,
+}

@@ -69,4 +69,8 @@ pub mod credit_score_oracle {
     pub fn set_validity_period(ctx: Context<AdminAction>, new_period: i64) -> Result<()> {
         instructions::admin::handler_set_validity(ctx, new_period)
     }
+
+    pub fn set_history_authority(ctx: Context<AdminAction>, new_authority: Pubkey) -> Result<()> {
+        instructions::admin::handler_set_history_authority(ctx, new_authority)
+    }
 }

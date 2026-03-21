@@ -37,42 +37,44 @@ export function useCreditScore() {
   return { score, result, loading, error, reset: () => { setResult(null); setError(null); } };
 }
 
-/** Fetch pool state (mock or from on-chain) */
+/** Fetch pool state. Falls back to clearly labeled demo data when no live source exists. */
 export function usePoolState() {
   const { connection } = useConnection();
   const [pool, setPool] = useState<PoolState | null>(null);
 
   const refresh = useCallback(async () => {
-    // In production: deserialize PoolState PDA from on-chain
-    // For hackathon: use mock data
+    // TODO: replace with PoolState PDA deserialization once the client SDK exists.
+    // Until then, expose demo data explicitly so the UI cannot be mistaken for
+    // a live protocol monitor.
     setPool({
       totalDeposited: 50000, totalBorrowed: 12000, utilization: 24,
       interestEarned: 340, activeLoans: 3, defaultRate: 1.2, baseRateBps: 650,
+      source: 'demo',
     });
   }, [connection]);
 
   return { pool, refresh };
 }
 
-/** Demo step runner — simulates golden path lifecycle */
+/** Demo step runner — explicitly simulates the golden-path lifecycle for UI previews. */
 export function useDemoRunner() {
   const [running, setRunning] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
   const [log, setLog] = useState<string[]>([]);
 
   const STEPS = [
-    { label: 'Scoring borrower via ML API…', duration: 1200 },
-    { label: 'Score: 720 (AA tier, 89% confidence)', duration: 800 },
-    { label: 'Locking 1.5 XAUT collateral in escrow PDA…', duration: 1000 },
-    { label: 'Escrow locked ✓ — PDA-owned vault', duration: 600 },
-    { label: 'Conditional disbursement — checking 4 gates…', duration: 1400 },
-    { label: '✓ Score valid  ✓ Escrow locked  ✓ Util OK  ✓ Agent auth', duration: 800 },
-    { label: 'Disbursed 3,000 USDT to borrower', duration: 600 },
-    { label: 'Creating 6-installment repayment schedule…', duration: 800 },
-    { label: 'Pulling installment 1/6: 500 USDT via delegate…', duration: 1000 },
-    { label: 'Borrower repays remaining balance…', duration: 800 },
-    { label: 'Loan fully repaid — releasing collateral…', duration: 1000 },
-    { label: '1.5 XAUT returned to borrower. Lifecycle complete ✓', duration: 0 },
+    { label: '[Demo] Scoring borrower via ML API…', duration: 1200 },
+    { label: '[Demo] Score: 720 (AA tier, 89% confidence)', duration: 800 },
+    { label: '[Demo] Locking 1.5 XAUT collateral in escrow PDA…', duration: 1000 },
+    { label: '[Demo] Escrow locked ✓ — PDA-owned vault', duration: 600 },
+    { label: '[Demo] Conditional disbursement — checking 4 gates…', duration: 1400 },
+    { label: '[Demo] ✓ Score valid  ✓ Escrow locked  ✓ Util OK  ✓ Agent auth', duration: 800 },
+    { label: '[Demo] Disbursed 3,000 USDT to borrower', duration: 600 },
+    { label: '[Demo] Creating 6-installment repayment schedule…', duration: 800 },
+    { label: '[Demo] Pulling installment 1/6: 500 USDT via delegate…', duration: 1000 },
+    { label: '[Demo] Borrower repays remaining balance…', duration: 800 },
+    { label: '[Demo] Loan fully repaid — releasing collateral…', duration: 1000 },
+    { label: '[Demo] 1.5 XAUT returned to borrower. Lifecycle complete ✓', duration: 0 },
   ];
 
   const run = useCallback(async () => {

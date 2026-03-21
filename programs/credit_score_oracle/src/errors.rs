@@ -26,4 +26,8 @@ pub enum OracleError {
     DidAlreadyRegistered,
     #[msg("Borrower address cannot be zero")]
     InvalidBorrower,
+    #[msg("History authority cannot be the zero pubkey")]
+    InvalidHistoryAuthority,
+    #[msg("Only the configured history authority may record credit-history loan events")]
+    HistoryUpdateRestricted,
 }

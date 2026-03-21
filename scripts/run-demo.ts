@@ -1,8 +1,13 @@
 /**
  * run-demo.ts — CredAgent Golden Path Demo
  *
- * Runs the complete loan lifecycle on Solana devnet for demo recording.
+ * Runs a narrated golden-path demo for recording.
  * Each step prints a formatted banner so the screen recording looks clean.
+ *
+ * Important:
+ * - Wallet funding + mock mint setup are real devnet operations.
+ * - Most protocol lifecycle steps below remain narrated/demo checkpoints
+ *   until replaced with real Anchor RPC calls.
  *
  * Usage: npx ts-node scripts/run-demo.ts
  *
@@ -131,15 +136,15 @@ async function main() {
   await sleep(1000);
 
   // ═══ STEP 1: Initialize Oracle ═══
-  banner(1, TOTAL_STEPS, "Initialize CreditScoreOracle");
+  banner(1, TOTAL_STEPS, "Initialize CreditScoreOracle (demo narration)");
   info("Creating oracle state PDA...");
-  // In production: await oracleProgram.methods.initialize(new BN(604800)).accounts({...}).rpc();
-  result("Oracle", "Initialized with 7-day validity period");
+  info("Simulated step — replace with a real RPC before using as execution proof.");
+  result("Oracle (demo)", "Would initialize with 7-day validity period");
   result("Admin", admin.publicKey.toBase58().slice(0, 16) + "...");
   await sleep(800);
 
   // ═══ STEP 2: Score Borrower ═══
-  banner(2, TOTAL_STEPS, "Score Borrower via ML API");
+  banner(2, TOTAL_STEPS, "Score Borrower via ML API (demo narration)");
   info("Extracting 14 on-chain features...");
   await sleep(600);
   info("Running XGBoost prediction...");
@@ -149,11 +154,11 @@ async function main() {
   result("Default Probability", "8.2%");
   result("Model Hash", "aa".repeat(16) + "...");
   result("ZK Proof Hash", "bb".repeat(16) + "...");
-  info("Score pushed to CreditScoreOracle PDA on-chain");
+  info("Narrated only here — this script is not submitting the oracle update.");
   await sleep(800);
 
   // ═══ STEP 3: Initialize Pool ═══
-  banner(3, TOTAL_STEPS, "Initialize Lending Pool + Deposit");
+  banner(3, TOTAL_STEPS, "Initialize Lending Pool + Deposit (demo narration)");
   info("Creating pool for USDT mint...");
   result("Base Rate", "6.5% APR (650 bps)");
   result("Max Utilization", "80%");
@@ -163,15 +168,15 @@ async function main() {
   await sleep(800);
 
   // ═══ STEP 4: Register Agents ═══
-  banner(4, TOTAL_STEPS, "Register Agents with 4-Tier Permissions");
+  banner(4, TOTAL_STEPS, "Register Agents with 4-Tier Permissions (demo narration)");
   result("Lending Agent", `Tier 2 (Manage), 10,000 USDT/day limit`);
   result("Collection Agent", `Tier 1 (Operate), 1,000 USDT/day limit`);
   result("Oracle Agent", `Tier 1 (Operate), score push authorized`);
-  info("All agents on-chain. Tier 3 (Admin) reserved for human.");
+  info("Narrative checkpoint only. Use scripts/init-agents.ts for real registration.");
   await sleep(800);
 
   // ═══ STEP 5: Lock Collateral ═══
-  banner(5, TOTAL_STEPS, "PRIMITIVE 1: Lock Collateral in Escrow PDA", Y);
+  banner(5, TOTAL_STEPS, "PRIMITIVE 1: Lock Collateral in Escrow PDA (demo narration)", Y);
   info("Borrower deposits 1.5 XAUT into program-owned escrow vault...");
   await sleep(600);
   result("Escrow PDA", "Created — program-owned vault");
@@ -181,7 +186,7 @@ async function main() {
   await sleep(800);
 
   // ═══ STEP 6: Conditional Disburse ═══
-  banner(6, TOTAL_STEPS, "PRIMITIVE 2: Conditional Disbursement (4 Gates)", Y);
+  banner(6, TOTAL_STEPS, "PRIMITIVE 2: Conditional Disbursement (4 Gates, demo narration)", Y);
   console.log(`  ${C}Checking 4 gates atomically...${N}\n`);
   await sleep(400);
   result("Gate 1 — Credit Score", "720 AA, not expired, confidence 89%");
@@ -193,20 +198,20 @@ async function main() {
   result("Gate 4 — Agent CPI", "Tier=Manage ✓, Limit 3K/10K ✓, Not paused ✓");
   await sleep(400);
   console.log(`\n  ${G}${BOLD}ALL 4 GATES PASSED${N}\n`);
-  result("Disbursed", "3,000 USDT → borrower wallet");
+  result("Disbursed (demo)", "3,000 USDT → borrower wallet");
   result("Loan ID", "#1");
   result("Decision Hash", "cc".repeat(16) + "...");
   await sleep(1000);
 
   // ═══ STEP 7: Create Schedule ═══
-  banner(7, TOTAL_STEPS, "PRIMITIVE 3: Create Installment Schedule", Y);
+  banner(7, TOTAL_STEPS, "PRIMITIVE 3: Create Installment Schedule (demo narration)", Y);
   result("Installments", "6 × 500 USDT every 10 days");
   result("Collection Agent", collectionAgent.publicKey.toBase58().slice(0, 16) + "...");
   result("First Due", "10 days from now");
   await sleep(800);
 
   // ═══ STEP 8: Interest Accrual ═══
-  banner(8, TOTAL_STEPS, "PRIMITIVE 5: Interest Streaming");
+  banner(8, TOTAL_STEPS, "PRIMITIVE 5: Interest Streaming (demo narration)");
   info("Accruing interest over elapsed time...");
   result("Effective Rate", "39 bps (base 650 × util 6%)");
   result("Interest Index", "1.000320... × 1e18");
@@ -215,7 +220,7 @@ async function main() {
   await sleep(800);
 
   // ═══ STEP 9: Pull Installment ═══
-  banner(9, TOTAL_STEPS, "PRIMITIVE 4: Auto-Pull Installment via Delegate", Y);
+  banner(9, TOTAL_STEPS, "PRIMITIVE 4: Auto-Pull Installment via Delegate (demo narration)", Y);
   info("Borrower pre-approved collection agent as SPL delegate...");
   info("Collection agent pulls first installment...");
   result("Pulled", "500 USDT (installment 1/6)");
@@ -224,7 +229,7 @@ async function main() {
   await sleep(800);
 
   // ═══ STEP 10: Full Repay ═══
-  banner(10, TOTAL_STEPS, "Borrower Repays Remaining Balance");
+  banner(10, TOTAL_STEPS, "Borrower Repays Remaining Balance (demo narration)");
   info("Borrower manually repays remaining principal + interest...");
   result("Repaid", "~2,501 USDT (principal remainder + accrued interest)");
   result("Loan Status", "REPAID");
@@ -232,7 +237,7 @@ async function main() {
   await sleep(800);
 
   // ═══ STEP 11: Release Collateral ═══
-  banner(11, TOTAL_STEPS, "PRIMITIVE 6: Release Collateral from Escrow", Y);
+  banner(11, TOTAL_STEPS, "PRIMITIVE 6: Release Collateral from Escrow (demo narration)", Y);
   info("Loan fully repaid → releasing escrowed collateral...");
   result("Released", "1.5 XAUT → borrower wallet");
   result("Escrow Status", "RELEASED");
@@ -240,7 +245,7 @@ async function main() {
   await sleep(800);
 
   // ═══ STEP 12: Final Verification ═══
-  banner(12, TOTAL_STEPS, "Final State Verification", G);
+  banner(12, TOTAL_STEPS, "Final Demo State Summary", G);
   console.log(`  ${G}┌──────────────────────────┬─────────────┐${N}`);
   console.log(`  ${G}│ Account                  │ State       │${N}`);
   console.log(`  ${G}├──────────────────────────┼─────────────┤${N}`);
@@ -257,9 +262,9 @@ async function main() {
   console.log(`  ${G}└──────────────────────────┴─────────────┘${N}`);
 
   console.log(`\n${M}${BOLD}╔══════════════════════════════════════════════════════╗${N}`);
-  console.log(`${M}${BOLD}║  ✓ GOLDEN PATH COMPLETE                              ║${N}`);
-  console.log(`${M}${BOLD}║  All 7 payment primitives validated end-to-end        ║${N}`);
-  console.log(`${M}${BOLD}║  4 agents operated autonomously with safety checks    ║${N}`);
+  console.log(`${M}${BOLD}║  ✓ NARRATED GOLDEN PATH COMPLETE                     ║${N}`);
+  console.log(`${M}${BOLD}║  Demo checkpoints shown; confirm chain state separately║${N}`);
+  console.log(`${M}${BOLD}║  Use integration tests / RPC queries for proof        ║${N}`);
   console.log(`${M}${BOLD}╚══════════════════════════════════════════════════════╝${N}\n`);
 }
 

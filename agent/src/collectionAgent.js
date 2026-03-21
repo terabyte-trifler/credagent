@@ -197,6 +197,7 @@ export class CollectionTrackerAgent {
     const liqResult = await this.#mcpBridge.executeTool('liquidate_escrow', {
       agent_id: 'collection-agent',
       loan_id: loanId,
+      liquidation_recipient: process.env.LIQUIDATION_RECIPIENT_ATA || process.env.DEPLOYER_XAUT_ATA,
     });
 
     if (!liqResult.success) {

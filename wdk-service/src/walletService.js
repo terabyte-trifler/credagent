@@ -399,6 +399,15 @@ export class WalletService {
     }));
   }
 
+  /** Reverse lookup for a managed wallet by public address. */
+  getAgentIdByAddress(address) {
+    validate.solanaAddress(address);
+    for (const [agentId, record] of this.#agents.entries()) {
+      if (record.address === address) return agentId;
+    }
+    return null;
+  }
+
   /** Check if an agent wallet exists. */
   hasWallet(agentId) {
     return this.#agents.has(agentId);
@@ -413,6 +422,11 @@ export class WalletService {
   getAccount(agentId) {
     validate.agentId(agentId);
     return this.#requireAgent(agentId).account;
+  }
+
+  /** Expose the configured RPC URL for read/write helpers built on top of WDK. */
+  getRpcUrl() {
+    return this.#config.rpcUrl;
   }
 
   // ═══════════════════════════════════════

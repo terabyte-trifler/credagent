@@ -167,13 +167,18 @@ export const lockCollateral = {
   name: 'lock_collateral',
   description:
     'PAYMENT PRIMITIVE 1: Lock borrower collateral in program-owned escrow PDA. ' +
-    'Tokens can only be released by release_collateral or liquidate_escrow.',
+    'Requires the borrower signer. If the borrower wallet is managed locally, this tool can submit the tx.',
   inputSchema: {
     type: 'object',
     properties: {
       agent_id: { type: 'string', pattern: '^[a-zA-Z0-9_-]{1,64}$' },
       loan_id: { type: 'integer', minimum: 1, description: 'Loan ID from pool' },
       borrower: { type: 'string', description: 'Borrower Solana address' },
+      borrower_agent_id: {
+        type: 'string',
+        pattern: '^[a-zA-Z0-9_-]{1,64}$',
+        description: 'Optional managed-wallet id for the borrower signer.',
+      },
       collateral_mint: { type: 'string', description: 'Collateral token mint (base58)' },
       amount: { type: 'string', description: 'Collateral amount (integer string)' },
     },
@@ -194,6 +199,7 @@ export const conditionalDisburse = {
     properties: {
       agent_id: { type: 'string', pattern: '^[a-zA-Z0-9_-]{1,64}$' },
       borrower: { type: 'string', description: 'Borrower Solana address' },
+      loan_id: { type: 'integer', minimum: 1, description: 'Reserved on-chain loan id' },
       principal: { type: 'string', description: 'Loan amount (integer string, token units)' },
       interest_rate_bps: { type: 'integer', minimum: 1, maximum: 5000 },
       duration_days: { type: 'integer', minimum: 1, maximum: 365 },
@@ -203,7 +209,7 @@ export const conditionalDisburse = {
         pattern: '^[0-9a-f]{64}$',
       },
     },
-    required: ['agent_id', 'borrower', 'principal', 'interest_rate_bps', 'duration_days', 'decision_hash'],
+    required: ['agent_id', 'borrower', 'loan_id', 'principal', 'interest_rate_bps', 'duration_days', 'decision_hash'],
     additionalProperties: false,
   },
 };
@@ -227,7 +233,7 @@ export const pushScoreOnchain = {
   name: 'push_score_onchain',
   description:
     'Write a borrower credit score to the CreditScoreOracle program. ' +
-    'Returns built instruction metadata for WDK-backed submission.',
+    'Submits a signer-backed update transaction when the agent wallet is available; otherwise returns build metadata.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -245,7 +251,7 @@ export const pushScoreOnchain = {
 
 export const markDefault = {
   name: 'mark_default',
-  description: 'Mark a loan as defaulted after grace period expiry.',
+  description: 'Submit a mark_default call after grace period expiry when the agent signer is available.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -259,12 +265,16 @@ export const markDefault = {
 
 export const liquidateEscrow = {
   name: 'liquidate_escrow',
-  description: 'Liquidate escrow collateral for a defaulted loan.',
+  description: 'Submit a collateral liquidation call for a defaulted loan when a valid recipient token account is configured.',
   inputSchema: {
     type: 'object',
     properties: {
       agent_id: { type: 'string', pattern: '^[a-zA-Z0-9_-]{1,64}$' },
       loan_id: { type: 'integer', minimum: 1 },
+      liquidation_recipient: {
+        type: 'string',
+        description: 'Optional recipient SPL token account for seized collateral. If omitted, env fallback is used.',
+      },
     },
     required: ['agent_id', 'loan_id'],
     additionalProperties: false,

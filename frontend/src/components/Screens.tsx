@@ -228,8 +228,8 @@ export function DemoButton({ onRun, running = false }) {
     <button onClick={onRun} disabled={running}
       className="w-full py-4 rounded-xl bg-gradient-to-r from-teal-600 to-emerald-600 text-white font-semibold text-base hover:from-teal-700 hover:to-emerald-700 disabled:opacity-60 transition-all flex items-center justify-center gap-3 shadow-lg shadow-teal-500/20">
       {running
-        ? <><Loader2 size={20} className="animate-spin" /> Running golden path...</>
-        : <><Play size={20} /> Run full demo: Score → Escrow → Disburse → Repay → Release</>
+        ? <><Loader2 size={20} className="animate-spin" /> Running narrated demo...</>
+        : <><Play size={20} /> Run narrated demo: Score → Escrow → Disburse → Repay → Release</>
       }
     </button>
   );
