@@ -1,15 +1,68 @@
 {
+  "$schema": "https://docs.openclaw.ai/config-schema.json",
+  "_comment": "CredAgent OpenClaw configuration — connects agent to WDK via MCP bridge",
+
+  "name": "credagent",
+  "description": "Autonomous lending protocol agents on Solana",
+
+  "llm": {
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-20250514",
+    "maxTokens": 4096,
+    "temperature": 0.3
+  },
+
   "mcp_servers": [
     {
-      "name": "credagent-wdk",
-      "command": "node",
-      "args": ["./wdk-service/src/index.js"]
+      "name": "credagent-mcp",
+      "description": "CredAgent wallet + credit + payment tools via Tether WDK",
+      "transport": "sse",
+      "url": "http://localhost:3100/mcp",
+      "tools": [
+        "create_wallet",
+        "get_balance",
+        "send_sol",
+        "send_token",
+        "compute_credit_score",
+        "check_eligibility",
+        "get_default_probability",
+        "lock_collateral",
+        "conditional_disburse",
+        "create_installment_schedule",
+        "pull_installment",
+        "bridge_usdt0"
+      ]
+    },
+    {
+      "name": "wdk-mcp-toolkit",
+      "description": "Official Tether WDK MCP Toolkit for additional wallet tools",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["@tetherto/wdk-mcp-toolkit"]
     }
   ],
+
   "skills": [
-    "./agent/skills/credit-assessment/SKILL.md",
-    "./agent/skills/lending-decision/SKILL.md",
-    "./agent/skills/collection-tracker/SKILL.md",
-    "./agent/skills/yield-optimizer/SKILL.md"
-  ]
+    "credit-assessment",
+    "lending-decision",
+    "collection-tracker",
+    "yield-optimizer"
+  ],
+
+  "skills_path": "./agent/skills",
+
+  "safety": {
+    "max_tool_calls_per_message": 5,
+    "require_confirmation_for": [
+      "conditional_disburse",
+      "bridge_usdt0"
+    ],
+    "blocked_tools": [],
+    "rate_limit_per_hour": 200
+  },
+
+  "messaging": {
+    "providers": ["telegram", "discord"],
+    "owner_only_commands": ["/pause", "/status", "/audit"]
+  }
 }

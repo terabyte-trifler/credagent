@@ -6,6 +6,7 @@
  * - WalletService: Core wallet ops (create, balance, send)
  * - TokenOps: SPL approve/revoke + message signing
  * - BridgeService: USDT0 cross-chain bridging
+ * - MCPBridge: OpenClaw MCP dispatcher for wallet/credit/payment tools
  * - AuditLog: Operation logging
  * - validate: Input validation helpers
  */
@@ -13,6 +14,9 @@
 export { WalletService } from './walletService.js';
 export { TokenOps } from './tokenOps.js';
 export { BridgeService } from './bridgeService.js';
+export { MCPBridge } from './mcpBridge.js';
+export { ALL_TOOLS, TOOL_MAP } from './toolDefs.js';
+export { validate as mcpValidate } from './safetyLayer.js';
 export { AuditLog } from './auditLog.js';
 export { validate } from './validation.js';
 
