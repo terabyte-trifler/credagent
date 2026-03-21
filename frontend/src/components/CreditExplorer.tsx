@@ -1,106 +1,141 @@
-/**
- * Screen 2: Credit Score Explorer
- * Input address → display score gauge, risk tier, component breakdown radar.
- */
 import React, { useState } from 'react';
 import { RadarChart, PolarGrid, PolarAngleAxis, Radar, ResponsiveContainer } from 'recharts';
-import { Search, ShieldCheck } from 'lucide-react';
+import { Search, ShieldCheck, Loader2 } from 'lucide-react';
+import { TIER_COLORS, type CreditResult } from '../lib/constants';
+import { useCreditScore } from '../hooks/useCredAgent';
 
-const TIER_COLORS = { AAA: '#1ABC9C', AA: '#3498DB', A: '#F39C12', BB: '#E67E22', C: '#E74C3C' };
+/** SVG score gauge arc */
+function ScoreGauge({ score, tier }: { score: number; tier: string }) {
+  const pct = Math.max(0, Math.min(1, (score - 300) / 550));
+  const radius = 70;
+  const circ = 2 * Math.PI * radius;
+  const arcLen = circ * 0.75; // 270 degrees
+  const offset = arcLen * (1 - pct);
+  const color = TIER_COLORS[tier] || '#6b7280';
 
-export default function CreditExplorer({ onScore }) {
+  return (
+    <svg viewBox="0 0 180 160" className="w-48 h-40">
+      <circle cx="90" cy="90" r={radius} fill="none" stroke="currentColor"
+        className="text-surface-3" strokeWidth="10" strokeLinecap="round"
+        strokeDasharray={`${arcLen} ${circ}`} strokeDashoffset="0"
+        transform="rotate(135 90 90)" />
+      <circle cx="90" cy="90" r={radius} fill="none" stroke={color}
+        strokeWidth="10" strokeLinecap="round" className="score-arc"
+        strokeDasharray={`${arcLen} ${circ}`} strokeDashoffset={offset}
+        transform="rotate(135 90 90)" />
+      <text x="90" y="85" textAnchor="middle" className="fill-gray-100 font-display"
+        fontSize="36" fontWeight="700">{score}</text>
+      <text x="90" y="108" textAnchor="middle" className="fill-gray-500"
+        fontSize="11" fontWeight="500">of 850</text>
+    </svg>
+  );
+}
+
+/** T5.8 — ZK Proof Badge */
+function ZkBadge({ hash }: { hash?: string }) {
+  return (
+    <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-cred-900/20 border border-cred-800/30">
+      <ShieldCheck size={14} className="text-cred-400 flex-shrink-0" />
+      <div>
+        <div className="text-[10px] font-semibold text-cred-400 uppercase tracking-wider">Credit Verified Privately</div>
+        <div className="text-[10px] text-gray-500 font-mono truncate max-w-[200px]">
+          zk: {hash ? hash.slice(0, 24) + '…' : 'awaiting proof'}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function CreditExplorer() {
+  const { score: fetchScore, result, loading, error } = useCreditScore();
   const [address, setAddress] = useState('');
-  const [result, setResult] = useState(null);
-  const [loading, setLoading] = useState(false);
 
-  const handleScore = async () => {
-    if (!address || address.length < 32) return;
-    setLoading(true);
-    try {
-      const resp = await fetch(`${import.meta.env.VITE_ML_API_URL || 'http://localhost:5001'}/score`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ address }),
-      });
-      const data = await resp.json();
-      setResult(data);
-      onScore?.(data);
-    } catch (e) {
-      console.error('Score failed:', e);
-    }
-    setLoading(false);
+  const handleScore = () => {
+    if (address.length >= 32) fetchScore(address);
   };
 
   const radarData = result?.components
     ? Object.entries(result.components).map(([key, value]) => ({
-        subject: key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
-        score: Math.round(value * 100),
+        label: key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+        value: Math.round(Number(value) * 100),
       }))
     : [];
 
   return (
-    <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 p-6">
-      <h2 className="font-semibold text-lg mb-4 text-gray-900 dark:text-gray-100">Credit score explorer</h2>
+    <div className="glass p-6">
+      <h2 className="text-base font-semibold text-gray-100 mb-4">Credit score explorer</h2>
 
       {/* Search bar */}
       <div className="flex gap-2 mb-6">
         <div className="relative flex-1">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-          <input type="text" placeholder="Enter Solana address..." value={address}
-            onChange={e => setAddress(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleScore()}
-            className="w-full pl-9 pr-4 py-2.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 text-sm focus:ring-2 focus:ring-teal-500 focus:border-transparent outline-none" />
+          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+          <input type="text" value={address} onChange={e => setAddress(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleScore()}
+            placeholder="Enter Solana wallet address…"
+            className="w-full pl-9 pr-4 py-2.5 rounded-xl bg-surface-2 border border-white/[0.04] text-sm text-gray-200 placeholder:text-gray-600 focus:ring-1 focus:ring-cred-600/50 focus:border-cred-600/30 outline-none transition-all" />
         </div>
-        <button onClick={handleScore} disabled={loading}
-          className="px-5 py-2.5 rounded-lg bg-teal-600 text-white text-sm font-medium hover:bg-teal-700 disabled:opacity-50 transition-colors">
-          {loading ? 'Scoring...' : 'Score'}
+        <button onClick={handleScore} disabled={loading || address.length < 32}
+          className="px-5 py-2.5 rounded-xl bg-cred-600 text-white text-sm font-medium hover:bg-cred-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center gap-2">
+          {loading ? <Loader2 size={15} className="animate-spin" /> : null}
+          {loading ? 'Scoring…' : 'Score'}
         </button>
       </div>
 
+      {error && (
+        <div className="mb-4 px-4 py-3 rounded-xl bg-red-900/20 border border-red-800/30 text-sm text-red-400">
+          {error}
+        </div>
+      )}
+
       {result && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Score gauge */}
-          <div className="flex flex-col items-center justify-center p-6 rounded-xl bg-gray-50 dark:bg-gray-900">
-            <div className="text-6xl font-bold" style={{ color: TIER_COLORS[result.risk_tier] || '#888' }}>
-              {result.score}
-            </div>
-            <div className="mt-2 flex items-center gap-2">
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 animate-fade-up">
+          {/* Left: Score gauge + tier + terms */}
+          <div className="lg:col-span-2 flex flex-col items-center">
+            <ScoreGauge score={result.score} tier={result.risk_tier} />
+
+            <div className="flex items-center gap-2 mt-2 mb-4">
               <span className="px-3 py-1 rounded-full text-xs font-bold text-white"
-                style={{ backgroundColor: TIER_COLORS[result.risk_tier] || '#888' }}>
+                style={{ backgroundColor: TIER_COLORS[result.risk_tier] || '#6b7280' }}>
                 {result.risk_tier} Tier
               </span>
               <span className="text-xs text-gray-500">{result.confidence}% confidence</span>
             </div>
-            <div className="mt-4 text-xs text-gray-400">
-              Range: 300 (poor) — 850 (excellent)
+
+            {/* Recommended terms */}
+            <div className="w-full grid grid-cols-3 gap-2 mb-4">
+              {[
+                { label: 'Max LTV', value: `${(result.recommended_terms.max_ltv_bps / 100)}%` },
+                { label: 'Rate', value: `${(result.recommended_terms.rate_bps / 100).toFixed(1)}%` },
+                { label: 'Max loan', value: `$${result.recommended_terms.max_loan_usd.toLocaleString()}` },
+              ].map(t => (
+                <div key={t.label} className="text-center rounded-lg bg-surface-2/60 p-2.5">
+                  <div className="text-[9px] text-gray-500 uppercase tracking-widest">{t.label}</div>
+                  <div className="text-sm font-semibold text-gray-200 mt-0.5">{t.value}</div>
+                </div>
+              ))}
             </div>
-            {/* Terms */}
-            {result.recommended_terms && (
-              <div className="mt-4 grid grid-cols-3 gap-3 w-full text-center">
-                <div>
-                  <div className="text-[10px] text-gray-400 uppercase">Max LTV</div>
-                  <div className="text-sm font-semibold">{(result.recommended_terms.max_ltv_bps / 100).toFixed(0)}%</div>
-                </div>
-                <div>
-                  <div className="text-[10px] text-gray-400 uppercase">Rate</div>
-                  <div className="text-sm font-semibold">{(result.recommended_terms.rate_bps / 100).toFixed(1)}%</div>
-                </div>
-                <div>
-                  <div className="text-[10px] text-gray-400 uppercase">Max loan</div>
-                  <div className="text-sm font-semibold">${result.recommended_terms.max_loan_usd?.toLocaleString()}</div>
-                </div>
-              </div>
-            )}
+
+            <ZkBadge hash={result.zk_proof_hash || result.model_hash} />
           </div>
 
-          {/* Radar chart */}
-          <div>
-            <h3 className="text-sm font-medium text-gray-500 mb-2">Component breakdown</h3>
-            <ResponsiveContainer width="100%" height={240}>
-              <RadarChart data={radarData}>
-                <PolarGrid stroke="#e5e7eb" />
-                <PolarAngleAxis dataKey="subject" tick={{ fontSize: 10, fill: '#6b7280' }} />
-                <Radar dataKey="score" stroke="#1ABC9C" fill="#1ABC9C" fillOpacity={0.2} strokeWidth={2} />
+          {/* Right: Radar chart */}
+          <div className="lg:col-span-3">
+            <div className="text-xs text-gray-500 font-medium mb-2">FICO component breakdown</div>
+            <ResponsiveContainer width="100%" height={260}>
+              <RadarChart data={radarData} outerRadius="75%">
+                <PolarGrid stroke="#222233" />
+                <PolarAngleAxis dataKey="label" tick={{ fontSize: 10, fill: '#6b7280' }} />
+                <Radar dataKey="value" stroke="#14c972" fill="#14c972" fillOpacity={0.15} strokeWidth={2} />
               </RadarChart>
             </ResponsiveContainer>
+
+            {/* Default probability */}
+            <div className="mt-3 flex items-center justify-between px-3 py-2 rounded-lg bg-surface-2/40">
+              <span className="text-xs text-gray-500">Default probability</span>
+              <span className="text-sm font-mono font-semibold text-gray-300">
+                {(result.default_probability * 100).toFixed(2)}%
+              </span>
+            </div>
           </div>
         </div>
       )}

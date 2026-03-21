@@ -1,143 +1,188 @@
 /**
- * CredAgent Dashboard — Main App
+ * CredAgent Dashboard — App.tsx
  *
- * 6 screens + DemoButton wired into a single-page layout.
- * Designed for hackathon demo: judges see everything on one page,
- * scroll through sections, or click "Run Demo" for the golden path.
+ * Wires all 9 screens into a single-page layout.
+ * Design: dark mode, glass morphism, DM Sans font, cred-green accent.
+ *
+ * T5.1: AgentStatus — top row, 4 cards
+ * T5.2: CreditExplorer — address → score + radar + ZK badge
+ * T5.3: LoanManager — expandable loan rows
+ * T5.4: PoolDashboard — TVL + utilization + area chart
+ * T5.5: NegotiationChat — LLM negotiation messages
+ * T5.6: DecisionLog — timeline with tx links
+ * T5.7: DemoButton — golden path runner (hero position)
+ * T5.8: ZK badge inside CreditExplorer
+ * T5.9: Error boundaries, loading, responsive, dark mode, wallet
  */
+
 import React, { useState, useCallback } from 'react';
+import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
+import { useWallet } from '@solana/wallet-adapter-react';
 import AgentStatus from './components/AgentStatus';
 import CreditExplorer from './components/CreditExplorer';
-import { LoanManager, PoolDashboard, NegotiationChat, DecisionLog, DemoButton } from './components/Screens';
+import LoanManager from './components/LoanManager';
+import PoolDashboard from './components/PoolDashboard';
+import { NegotiationChat, DecisionLog, DemoButton } from './components/Widgets';
+import ErrorBoundary from './components/ErrorBoundary';
+import { useDemoRunner } from './hooks/useCredAgent';
+import {
+  MOCK_AGENTS, MOCK_LOANS, MOCK_POOL, MOCK_DECISIONS,
+  type ChatMessage,
+} from './lib/constants';
 
-// Mock data for demo rendering
-const MOCK_AGENTS = {
-  'credit-agent':     { status: 'active', balance: '4.21', opsToday: 23, limitUsedPct: 12, lastAction: 'Scored 0xDRpb...21hy → 720 (AA)' },
-  'lending-agent':    { status: 'active', balance: '2.85', opsToday: 8,  limitUsedPct: 34, lastAction: 'Disbursed 3,000 USDT → 0xB3f2...' },
-  'collection-agent': { status: 'active', balance: '1.50', opsToday: 15, limitUsedPct: 5,  lastAction: 'Pulled installment 3/6 for loan #42' },
-  'yield-agent':      { status: 'idle',   balance: '0.92', opsToday: 2,  limitUsedPct: 1,  lastAction: 'Adjusted pool rate to 6.8%' },
-};
-
-const MOCK_LOANS = [
-  { id: 42, borrower: 'DRpbCBMx...21hy', principal: 3000, rateBps: 650, dueDate: '2026-05-18', repaid: 1500, escrowStatus: 'Locked', paidInstallments: 3, totalInstallments: 6, status: 'Active' },
-  { id: 41, borrower: '7nYB5K6q...9mPz', principal: 1000, rateBps: 1000, dueDate: '2026-04-20', repaid: 1050, escrowStatus: 'Released', paidInstallments: 4, totalInstallments: 4, status: 'Repaid' },
-];
-
-const MOCK_POOL = { totalDeposited: 50000, totalBorrowed: 12000, utilization: 24, interestEarned: 340, activeLoans: 3, defaultRate: 1.2 };
-
-const MOCK_DECISIONS = [
-  { action: 'Score updated', agent: 'Credit Agent', status: 'success', timestamp: '2 min ago', summary: 'Borrower DRpb... scored 720 (AA tier, 89% confidence)', txHash: 'abc123def456', decisionHash: 'sha256:7a8b9c...' },
-  { action: 'Loan disbursed', agent: 'Lending Agent', status: 'success', timestamp: '5 min ago', summary: 'Conditional disburse: 4 gates passed, 3,000 USDT sent', txHash: 'def789ghi012', decisionHash: 'sha256:4d5e6f...' },
-  { action: 'Installment pulled', agent: 'Collection Agent', status: 'success', timestamp: '1 hr ago', summary: 'Installment 3/6 pulled: 500 USDT from borrower via delegate', txHash: 'jkl345mno678' },
-  { action: 'Rate limit rejected', agent: 'Lending Agent', status: 'error', timestamp: '2 hr ago', summary: 'Daily spending limit exceeded: 8,500/10,000 USDT + 2,000 = over limit' },
-];
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-3 mb-3">
+      <span className="text-[10px] font-semibold text-gray-600 uppercase tracking-[0.15em]">{children}</span>
+      <div className="flex-1 h-px bg-gradient-to-r from-white/[0.04] to-transparent" />
+    </div>
+  );
+}
 
 export default function App() {
-  const [demoRunning, setDemoRunning] = useState(false);
-  const [chatMessages, setChatMessages] = useState([
-    { role: 'agent', text: 'Welcome. I\'m the CredAgent Lending Agent. I can evaluate your loan request based on your on-chain credit score. What amount do you need?' },
+  const { connected, publicKey } = useWallet();
+  const demo = useDemoRunner();
+
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
+    { role: 'agent', text: "I'm the CredAgent Lending Agent. I can evaluate your loan request using your on-chain credit score and negotiate terms. What amount are you looking for?" },
   ]);
 
-  const runDemo = useCallback(async () => {
-    setDemoRunning(true);
-    // Simulated golden path steps
-    const steps = [
-      'Step 1: Scoring borrower via ML API...',
-      'Step 2: Locking 1.5 XAUT collateral in escrow PDA...',
-      'Step 3: Conditional disbursement — checking 4 gates...',
-      'Step 4: All gates passed. Disbursing 3,000 USDT...',
-      'Step 5: Creating 6-installment repayment schedule...',
-      'Step 6: Pulling first installment (500 USDT)...',
-      'Step 7: Full repayment detected. Releasing collateral...',
-      'Demo complete! Full loan lifecycle executed.',
-    ];
-    for (const step of steps) {
-      setChatMessages(prev => [...prev, { role: 'agent', text: step }]);
-      await new Promise(r => setTimeout(r, 1200));
-    }
-    setDemoRunning(false);
-  }, []);
-
-  const handleChatSend = (text) => {
+  const handleChatSend = useCallback((text: string) => {
     setChatMessages(prev => [...prev, { role: 'user', text }]);
-    // Simulate agent response
     setTimeout(() => {
+      const isAmount = /\d/.test(text);
       setChatMessages(prev => [...prev, {
         role: 'agent',
-        text: `Based on your credit score of 720 (AA tier), I can offer: ${text.includes('3000') || text.includes('3,000')
-          ? '3,000 USDT at 6.5% APR for 60 days with 60% LTV collateral (1.5 XAUT). Shall I proceed?'
-          : 'Let me check your eligibility. What amount and duration are you looking for?'
-        }`,
+        text: isAmount
+          ? `Based on your AA-tier score (720), I can offer: ${text.includes('3000') || text.includes('3,000')
+            ? '3,000 USDT at 6.5% APR for 60 days. Collateral: 1.5 XAUT (60% LTV). Schedule: 6 × $500 every 10 days. Shall I proceed with these terms?'
+            : `Up to $5,000 USDT at 6.5% APR. What amount and duration work for you?`}`
+          : "Could you specify the loan amount you need? I'll calculate the best terms for your credit tier.",
       }]);
     }, 800);
-  };
+  }, []);
+
+  // Feed demo log into chat
+  const runDemo = useCallback(async () => {
+    await demo.run();
+  }, [demo]);
+
+  // Combine demo log with chat
+  const allMessages: ChatMessage[] = [
+    ...chatMessages,
+    ...demo.log.map(l => ({ role: 'agent' as const, text: l })),
+  ];
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
-      {/* Header */}
-      <header className="border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+    <div className="min-h-screen bg-surface-0">
+      {/* ═══ Header ═══ */}
+      <header className="sticky top-0 z-50 border-b border-white/[0.04] bg-surface-0/80 backdrop-blur-xl">
+        <div className="max-w-[1400px] mx-auto px-4 md:px-6 h-14 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-teal-600 flex items-center justify-center text-white font-bold text-sm">C</div>
+            <div className="w-8 h-8 rounded-lg bg-cred-600 flex items-center justify-center shadow-lg shadow-cred-600/20">
+              <span className="text-white font-bold text-sm">C</span>
+            </div>
             <div>
-              <h1 className="text-sm font-bold text-gray-900 dark:text-gray-100">CredAgent</h1>
-              <p className="text-[10px] text-gray-400">Autonomous Lending · Solana · WDK</p>
+              <h1 className="text-sm font-bold text-gray-100 tracking-tight">CredAgent</h1>
+              <p className="text-[9px] text-gray-600 uppercase tracking-[0.15em]">
+                Autonomous lending · Solana · WDK
+              </p>
             </div>
           </div>
-          <div className="flex items-center gap-2 text-xs text-gray-400">
-            <span className="w-2 h-2 rounded-full bg-emerald-500" />
-            Devnet · 4 agents active
+
+          <div className="flex items-center gap-3">
+            {/* Network badge */}
+            <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-surface-2 border border-white/[0.04]">
+              <span className="w-1.5 h-1.5 rounded-full bg-cred-500 animate-pulse" />
+              <span className="text-[10px] text-gray-400 font-mono">devnet</span>
+            </div>
+
+            {/* Agent count */}
+            <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-surface-2 border border-white/[0.04]">
+              <span className="text-[10px] text-gray-400">
+                {MOCK_AGENTS.filter(a => a.status === 'active').length} agents live
+              </span>
+            </div>
+
+            {/* Wallet connect (T5.9) */}
+            <WalletMultiButton />
           </div>
         </div>
       </header>
 
-      {/* Main content */}
-      <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
-        {/* Demo button — top, prominent */}
-        <DemoButton onRun={runDemo} running={demoRunning} />
+      {/* ═══ Main Content ═══ */}
+      <main className="max-w-[1400px] mx-auto px-4 md:px-6 py-6 space-y-6">
 
-        {/* Agent status */}
+        {/* T5.7: Demo button — hero position */}
+        <ErrorBoundary>
+          <DemoButton onRun={runDemo} running={demo.running}
+            currentStep={demo.currentStep} totalSteps={demo.totalSteps} />
+        </ErrorBoundary>
+
+        {/* T5.1: Agent status */}
         <section>
-          <h2 className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-3">Agent status</h2>
-          <AgentStatus agentData={MOCK_AGENTS} />
+          <SectionLabel>Agent status</SectionLabel>
+          <ErrorBoundary>
+            <AgentStatus agents={MOCK_AGENTS} />
+          </ErrorBoundary>
         </section>
 
-        {/* Credit explorer */}
+        {/* T5.2 + T5.8: Credit explorer (includes ZK badge) */}
         <section>
-          <h2 className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-3">Credit scoring</h2>
-          <CreditExplorer />
+          <SectionLabel>Credit scoring</SectionLabel>
+          <ErrorBoundary>
+            <CreditExplorer />
+          </ErrorBoundary>
         </section>
 
-        {/* Two-column: Loan manager + Chat */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* T5.3 + T5.5: Loans + Negotiation (side by side) */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 dashboard-grid">
           <section>
-            <h2 className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-3">Active loans</h2>
-            <LoanManager loans={MOCK_LOANS} />
+            <SectionLabel>Active loans</SectionLabel>
+            <ErrorBoundary>
+              <LoanManager loans={MOCK_LOANS} />
+            </ErrorBoundary>
           </section>
           <section>
-            <h2 className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-3">Loan negotiation</h2>
-            <NegotiationChat messages={chatMessages} onSend={handleChatSend} />
+            <SectionLabel>Loan negotiation</SectionLabel>
+            <ErrorBoundary>
+              <NegotiationChat messages={allMessages} onSend={handleChatSend}
+                loanTerms={{ rateBps: 650, durationDays: 60, collateral: '1.5 XAUT' }} />
+            </ErrorBoundary>
           </section>
         </div>
 
-        {/* Pool dashboard */}
+        {/* T5.4: Pool dashboard */}
         <section>
-          <h2 className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-3">Pool analytics</h2>
-          <PoolDashboard pool={MOCK_POOL} />
+          <SectionLabel>Pool analytics</SectionLabel>
+          <ErrorBoundary>
+            <PoolDashboard pool={MOCK_POOL} />
+          </ErrorBoundary>
         </section>
 
-        {/* Decision log */}
+        {/* T5.6: Decision log */}
         <section>
-          <h2 className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-3">Agent decisions</h2>
-          <DecisionLog decisions={MOCK_DECISIONS} />
+          <SectionLabel>Agent decisions</SectionLabel>
+          <ErrorBoundary>
+            <DecisionLog decisions={MOCK_DECISIONS} />
+          </ErrorBoundary>
         </section>
       </main>
 
-      {/* Footer */}
-      <footer className="border-t border-gray-200 dark:border-gray-800 mt-12 py-4">
-        <p className="text-center text-xs text-gray-400">
-          CredAgent · Tether WDK + OpenClaw + Solana · Hackathon Galactica 2026
-        </p>
+      {/* ═══ Footer ═══ */}
+      <footer className="border-t border-white/[0.04] mt-12">
+        <div className="max-w-[1400px] mx-auto px-6 py-4 flex items-center justify-between">
+          <p className="text-[10px] text-gray-700">
+            CredAgent · Tether WDK + OpenClaw + Solana · Hackathon Galactica 2026
+          </p>
+          <div className="flex items-center gap-3 text-[10px] text-gray-700">
+            <span>7 payment primitives</span>
+            <span>·</span>
+            <span>4 autonomous agents</span>
+            <span>·</span>
+            <span>XGBoost ML scoring</span>
+          </div>
+        </div>
       </footer>
     </div>
   );

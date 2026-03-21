@@ -19,13 +19,46 @@ import {
   LAMPORTS_PER_SOL,
   clusterApiUrl,
 } from '@solana/web3.js';
-import {
-  createMint,
-  mintTo,
-  getOrCreateAssociatedTokenAccount,
-} from '@solana/spl-token';
+import splToken from '@solana/spl-token';
 import fs from 'fs';
 import path from 'path';
+
+const { Token, TOKEN_PROGRAM_ID } = splToken;
+
+async function createMintCompat(connection, payer, mintAuthority, freezeAuthority, decimals) {
+  if (typeof splToken.createMint === 'function') {
+    return splToken.createMint(connection, payer, mintAuthority, freezeAuthority, decimals);
+  }
+
+  const token = await Token.createMint(
+    connection,
+    payer,
+    mintAuthority,
+    freezeAuthority,
+    decimals,
+    TOKEN_PROGRAM_ID,
+  );
+  return token.publicKey;
+}
+
+async function getOrCreateAssociatedTokenAccountCompat(connection, payer, mint, owner) {
+  if (typeof splToken.getOrCreateAssociatedTokenAccount === 'function') {
+    return splToken.getOrCreateAssociatedTokenAccount(connection, payer, mint, owner);
+  }
+
+  const token = new Token(connection, mint, TOKEN_PROGRAM_ID, payer);
+  const accountInfo = await token.getOrCreateAssociatedAccountInfo(owner);
+  return { address: accountInfo.address ?? accountInfo.pubkey };
+}
+
+async function mintToCompat(connection, payer, mint, destination, authority, amount) {
+  if (typeof splToken.mintTo === 'function') {
+    return splToken.mintTo(connection, payer, mint, destination, authority, amount);
+  }
+
+  const token = new Token(connection, mint, TOKEN_PROGRAM_ID, payer);
+  return token.mintTo(destination, authority, [], amount);
+}
 
 const GREEN = '\x1b[32m';
 const RED = '\x1b[31m';
@@ -76,7 +109,7 @@ async function main() {
   // ═══════════════════════════════════════
   console.log(`\n${CYAN}Creating mock USDT...${NC}`);
 
-  const usdtMint = await createMint(
+  const usdtMint = await createMintCompat(
     connection,
     deployer,        // payer
     deployer.publicKey, // mint authority
@@ -87,11 +120,11 @@ async function main() {
   console.log(`${GREEN}[✓]${NC} USDT Mint: ${usdtMint.toBase58()}`);
 
   // Create ATA and mint 1,000,000 USDT to deployer
-  const usdtAta = await getOrCreateAssociatedTokenAccount(
+  const usdtAta = await getOrCreateAssociatedTokenAccountCompat(
     connection, deployer, usdtMint, deployer.publicKey,
   );
 
-  await mintTo(
+  await mintToCompat(
     connection, deployer, usdtMint,
     usdtAta.address, deployer.publicKey,
     1_000_000_000_000, // 1,000,000 USDT (6 decimals)
@@ -104,7 +137,7 @@ async function main() {
   // ═══════════════════════════════════════
   console.log(`\n${CYAN}Creating mock XAUT (Tether Gold)...${NC}`);
 
-  const xautMint = await createMint(
+  const xautMint = await createMintCompat(
     connection,
     deployer,
     deployer.publicKey,
@@ -114,11 +147,11 @@ async function main() {
 
   console.log(`${GREEN}[✓]${NC} XAUT Mint: ${xautMint.toBase58()}`);
 
-  const xautAta = await getOrCreateAssociatedTokenAccount(
+  const xautAta = await getOrCreateAssociatedTokenAccountCompat(
     connection, deployer, xautMint, deployer.publicKey,
   );
 
-  await mintTo(
+  await mintToCompat(
     connection, deployer, xautMint,
     xautAta.address, deployer.publicKey,
     100_000_000, // 100 XAUT (6 decimals, ~$230,000 worth)

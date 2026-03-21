@@ -2,35 +2,65 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --credagent-teal: #1ABC9C;
-  --credagent-purple: #6C5CE7;
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
-}
-
-body {
-  margin: 0;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+@layer base {
+  :root { color-scheme: dark; }
+  body {
+    @apply bg-surface-0 text-gray-200 font-display antialiased;
+    margin: 0;
+  }
+  ::selection { @apply bg-cred-600/30 text-cred-200; }
 }
 
 /* Custom scrollbar */
-::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
-.dark ::-webkit-scrollbar-thumb { background: #374151; }
+::-webkit-scrollbar-thumb { @apply bg-surface-3 rounded-full; }
+::-webkit-scrollbar-thumb:hover { @apply bg-gray-600; }
 
-/* Smooth skeleton loading */
-@keyframes shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
+/* Staggered fade-up for children */
+.stagger-children > * {
+  @apply animate-fade-up;
 }
+.stagger-children > *:nth-child(1) { animation-delay: 0ms; }
+.stagger-children > *:nth-child(2) { animation-delay: 60ms; }
+.stagger-children > *:nth-child(3) { animation-delay: 120ms; }
+.stagger-children > *:nth-child(4) { animation-delay: 180ms; }
+.stagger-children > *:nth-child(5) { animation-delay: 240ms; }
+.stagger-children > *:nth-child(6) { animation-delay: 300ms; }
+
+/* Card glass effect */
+.glass {
+  @apply bg-surface-1/80 backdrop-blur-xl border border-white/[0.04] rounded-2xl;
+}
+
+/* Skeleton loading */
 .skeleton {
-  background: linear-gradient(90deg, #f3f4f6 25%, #e5e7eb 50%, #f3f4f6 75%);
-  background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
+  @apply bg-gradient-to-r from-surface-2 via-surface-3 to-surface-2 bg-[length:200%_100%] animate-shimmer rounded;
 }
-.dark .skeleton {
-  background: linear-gradient(90deg, #1f2937 25%, #374151 50%, #1f2937 75%);
-  background-size: 200% 100%;
+
+/* Score gauge arc */
+.score-arc {
+  transition: stroke-dashoffset 1s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Chat bubble tail */
+.chat-bubble-agent { @apply rounded-2xl rounded-bl-md; }
+.chat-bubble-user  { @apply rounded-2xl rounded-br-md; }
+
+/* Recharts overrides for dark mode */
+.recharts-cartesian-axis-tick-value { fill: #6b7280 !important; font-size: 11px; }
+.recharts-tooltip-wrapper { outline: none !important; }
+
+/* Phantom wallet adapter overrides */
+.wallet-adapter-button { @apply !bg-surface-2 !border !border-white/[0.06] !rounded-xl !font-display !text-sm; }
+.wallet-adapter-button:hover { @apply !bg-surface-3; }
+
+/* Error boundary */
+.error-boundary {
+  @apply flex flex-col items-center justify-center min-h-[200px] text-center;
+}
+
+/* Responsive grid */
+@media (max-width: 768px) {
+  .dashboard-grid { @apply grid-cols-1 !important; }
 }

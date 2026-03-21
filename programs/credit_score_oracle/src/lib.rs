@@ -7,7 +7,7 @@ pub mod instructions;
 
 use instructions::*;
 // credit_score_oracle/src/lib.rs
-declare_id!("49WpJBeDzwbeR1ApMcWkb2A9agTWQMuwVKvc9vnFqJBx");
+declare_id!("4cDu7SCGMzs6etzjJTyUXNXSJ6eRz54cDikSngezabhE");
 #[program]
 pub mod credit_score_oracle {
     use super::*;
