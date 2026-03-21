@@ -8,9 +8,15 @@ pub struct RecordLoanEvent<'info> {
     #[account(
         seeds = [ORACLE_STATE_SEED],
         bump = oracle_state.bump,
-        constraint = oracle_state.admin == authority.key() @ OracleError::OracleNotAuthorized,
     )]
     pub oracle_state: Account<'info, OracleState>,
+    #[account(
+        seeds = [ORACLE_AUTH_SEED, authority.key().as_ref()],
+        bump = oracle_authority.bump,
+        constraint = oracle_authority.agent == authority.key() @ OracleError::OracleNotAuthorized,
+        constraint = oracle_authority.is_active @ OracleError::OracleDeactivated,
+    )]
+    pub oracle_authority: Account<'info, OracleAuthority>,
     #[account(
         init_if_needed,
         payer = authority,
@@ -21,7 +27,8 @@ pub struct RecordLoanEvent<'info> {
     pub credit_history: Account<'info, CreditHistory>,
     /// CHECK: Borrower whose history is updated.
     pub borrower: UncheckedAccount<'info>,
-    // AUDIT: In production, restrict via CPI caller check to lending_pool only.
+    // AUDIT: Restricted to explicitly authorized oracle authority records.
+    // This removes direct admin mutation of borrower histories.
     #[account(mut)]
     pub authority: Signer<'info>,
     pub system_program: Program<'info, System>,

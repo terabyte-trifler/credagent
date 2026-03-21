@@ -22,8 +22,8 @@ agent_permissions = "6cKABjL45MFFJPAZ9EbJJjNxbNRJpGUVhbJLFHako39R"
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "devnet"
+cluster = "localnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]
-test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
+test = "yarn run vitest run --globals tests/integration/01_golden_path.ts tests/integration/02_default_path.ts tests/integration/03_to_08_scenarios.ts tests/security/attack_vectors.ts tests/security/escrow_unauthorized.ts"

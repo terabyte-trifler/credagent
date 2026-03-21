@@ -19,12 +19,16 @@
     "@tetherto/wdk-wallet-evm": "latest",
     "@tetherto/wdk-protocol-bridge-usdt0-evm": "latest",
     "@solana/web3.js": "^1.95.0",
-    "@solana/spl-token": "^0.4.0",
+    "@solana/spl-token": "0.1.8",
     "dotenv": "^16.4.0",
     "bs58": "^6.0.0"
   },
   "devDependencies": {
     "jest": "^29.7.0",
     "@jest/globals": "^29.7.0"
+  },
+  "overrides": {
+    "axios": "1.13.6",
+    "serialize-javascript": "7.0.4"
   }
 }

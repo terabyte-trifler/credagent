@@ -16,13 +16,8 @@ import {
   Connection,
   PublicKey,
   Transaction,
-  sendAndConfirmTransaction,
 } from '@solana/web3.js';
-import {
-  createApproveInstruction,
-  getAssociatedTokenAddress,
-  TOKEN_PROGRAM_ID,
-} from '@solana/spl-token';
+import { Token, TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import { validate } from './validation.js';
 import { AuditLog } from './auditLog.js';
 
@@ -87,17 +82,21 @@ export class TokenOps {
     const delegatePub = new PublicKey(delegatePubkey);
 
     // Derive the agent's associated token account for this mint
-    const ownerAta = await getAssociatedTokenAddress(mintPubkey, ownerPubkey);
+    const ownerAta = await Token.getAssociatedTokenAddress(
+      undefined,
+      TOKEN_PROGRAM_ID,
+      mintPubkey,
+      ownerPubkey,
+    );
 
     // Build approve instruction
     // AUDIT: Amount is exact BigInt — NOT u64::MAX
-    const approveIx = createApproveInstruction(
+    const approveIx = Token.createApproveInstruction(
       ownerAta,           // source token account
       delegatePub,        // delegate
       ownerPubkey,        // owner
       BigInt(validAmount), // exact amount
       [],                 // no multi-sig
-      TOKEN_PROGRAM_ID,
     );
 
     // Sign via WDK's internal signer
@@ -145,11 +144,18 @@ export class TokenOps {
 
     const ownerPubkey = new PublicKey(ownerAddress);
     const mintPubkey = new PublicKey(tokenMint);
-    const ownerAta = await getAssociatedTokenAddress(mintPubkey, ownerPubkey);
+    const ownerAta = await Token.getAssociatedTokenAddress(
+      undefined,
+      TOKEN_PROGRAM_ID,
+      mintPubkey,
+      ownerPubkey,
+    );
 
-    // Revoke = approve with amount 0 and delegate = owner
-    const revokeIx = createApproveInstruction(
-      ownerAta, ownerPubkey, ownerPubkey, 0n, [], TOKEN_PROGRAM_ID,
+    // Revoke all delegate authority on the token account.
+    const revokeIx = Token.createRevokeInstruction(
+      ownerAta,
+      ownerPubkey,
+      [],
     );
 
     const tx = new Transaction().add(revokeIx);

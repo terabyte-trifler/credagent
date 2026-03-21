@@ -2,12 +2,14 @@
 .env
 .venv
 venv
+.anchor
 node_modules
 target
 dist
 .DS_Store
 *.log
 *.key
+*-keypair.json
 *.json.bak
 *.seed
 /frontend/node_modules

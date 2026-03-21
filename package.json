@@ -3,22 +3,23 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
+    "test": "anchor test --skip-build",
+    "test:integration": "anchor test --skip-build",
+    "test:security": "ANCHOR_PROVIDER_URL=http://127.0.0.1:8899 ANCHOR_WALLET=$HOME/.config/solana/id.json vitest run --globals tests/security/attack_vectors.ts tests/security/escrow_unauthorized.ts",
     "lint:fix": "prettier */*.js \"*/**/*{.js,.ts}\" -w",
     "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.30.1",
-    "@solana/web3.js": "^1.95.0",
-    "@solana/spl-token": "^0.4.0"
+    "@solana/spl-token": "0.1.8",
+    "@solana/web3.js": "^1.95.0"
   },
   "devDependencies": {
-    "chai": "^4.3.4",
-    "mocha": "^10.0.0",
-    "ts-mocha": "^10.0.0",
     "@types/bn.js": "^5.1.0",
     "@types/chai": "^4.3.0",
-    "@types/mocha": "^10.0.0",
+    "chai": "^4.3.4",
+    "prettier": "^3.0.0",
     "typescript": "^5.0.0",
-    "prettier": "^3.0.0"
+    "vitest": "^3.2.4"
   }
 }
