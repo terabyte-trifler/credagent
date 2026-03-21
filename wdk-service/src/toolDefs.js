@@ -42,18 +42,27 @@ export const createWallet = {
 export const getBalance = {
   name: 'get_balance',
   description:
-    'Get SOL or SPL token balance for an agent wallet. ' +
-    'Pass token_mint for SPL tokens, omit for native SOL.',
+    'Get SOL or SPL token balance for an agent wallet, or inspect an external address. ' +
+    'Pass agent_id for managed wallets, or address for read-only external balance checks. ' +
+    'Pass token_mint for SPL tokens, omit for native SOL. delegate_to optionally checks delegated allowance.',
   inputSchema: {
     type: 'object',
     properties: {
       agent_id: { type: 'string', pattern: '^[a-zA-Z0-9_-]{1,64}$' },
+      address: {
+        type: 'string',
+        description: 'External Solana owner address for read-only balance inspection.',
+      },
       token_mint: {
         type: 'string',
         description: 'SPL token mint address (base58). Omit for SOL balance.',
       },
+      delegate_to: {
+        type: 'string',
+        description: 'Optional delegate pubkey to inspect delegated SPL allowance.',
+      },
     },
-    required: ['agent_id'],
+    required: [],
     additionalProperties: false,
   },
 };
@@ -188,13 +197,106 @@ export const conditionalDisburse = {
       principal: { type: 'string', description: 'Loan amount (integer string, token units)' },
       interest_rate_bps: { type: 'integer', minimum: 1, maximum: 5000 },
       duration_days: { type: 'integer', minimum: 1, maximum: 365 },
-      decision_reasoning: {
+      decision_hash: {
         type: 'string',
-        description: 'Agent reasoning text. SHA-256 hashed and stored on-chain.',
-        maxLength: 10000,
+        description: 'SHA-256 hex hash of agent reasoning. Raw reasoning must not be sent over the wire.',
+        pattern: '^[0-9a-f]{64}$',
       },
     },
-    required: ['agent_id', 'borrower', 'principal', 'interest_rate_bps', 'duration_days', 'decision_reasoning'],
+    required: ['agent_id', 'borrower', 'principal', 'interest_rate_bps', 'duration_days', 'decision_hash'],
+    additionalProperties: false,
+  },
+};
+
+export const getNextLoanId = {
+  name: 'get_next_loan_id',
+  description:
+    'Reserve the next loan id for a new loan flow. ' +
+    'Used to keep escrow, disbursement, and schedule creation on the same deterministic identifier.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      agent_id: { type: 'string', pattern: '^[a-zA-Z0-9_-]{1,64}$' },
+    },
+    required: ['agent_id'],
+    additionalProperties: false,
+  },
+};
+
+export const pushScoreOnchain = {
+  name: 'push_score_onchain',
+  description:
+    'Write a borrower credit score to the CreditScoreOracle program. ' +
+    'Returns built instruction metadata for WDK-backed submission.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      agent_id: { type: 'string', pattern: '^[a-zA-Z0-9_-]{1,64}$' },
+      borrower: { type: 'string', description: 'Borrower Solana address' },
+      score: { type: 'integer', minimum: 300, maximum: 850 },
+      confidence: { type: 'integer', minimum: 1, maximum: 100 },
+      model_hash: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+      zk_proof_hash: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+    },
+    required: ['agent_id', 'borrower', 'score', 'confidence', 'model_hash', 'zk_proof_hash'],
+    additionalProperties: false,
+  },
+};
+
+export const markDefault = {
+  name: 'mark_default',
+  description: 'Mark a loan as defaulted after grace period expiry.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      agent_id: { type: 'string', pattern: '^[a-zA-Z0-9_-]{1,64}$' },
+      loan_id: { type: 'integer', minimum: 1 },
+    },
+    required: ['agent_id', 'loan_id'],
+    additionalProperties: false,
+  },
+};
+
+export const liquidateEscrow = {
+  name: 'liquidate_escrow',
+  description: 'Liquidate escrow collateral for a defaulted loan.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      agent_id: { type: 'string', pattern: '^[a-zA-Z0-9_-]{1,64}$' },
+      loan_id: { type: 'integer', minimum: 1 },
+    },
+    required: ['agent_id', 'loan_id'],
+    additionalProperties: false,
+  },
+};
+
+export const recordLoanDefaulted = {
+  name: 'record_loan_defaulted',
+  description: 'Record a borrower default event in CreditScoreOracle credit history.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      agent_id: { type: 'string', pattern: '^[a-zA-Z0-9_-]{1,64}$' },
+      borrower: { type: 'string', description: 'Borrower Solana address' },
+    },
+    required: ['agent_id', 'borrower'],
+    additionalProperties: false,
+  },
+};
+
+export const sendNotification = {
+  name: 'send_notification',
+  description: 'Dispatch an out-of-band borrower notification for reminders and warnings.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      recipient: { type: 'string', description: 'Recipient Solana address or identity handle' },
+      type: { type: 'string', enum: ['SOFT_REMINDER', 'WARNING', 'DEFAULT_NOTICE'] },
+      message: { type: 'string', maxLength: 1000 },
+      loan_id: { type: 'integer', minimum: 1 },
+    },
+    required: ['recipient', 'type', 'message', 'loan_id'],
     additionalProperties: false,
   },
 };
@@ -266,6 +368,7 @@ export const ALL_TOOLS = [
   createWallet, getBalance, sendSol, sendToken,
   computeCreditScore, checkEligibility, getDefaultProbability,
   lockCollateral, conditionalDisburse, createSchedule, pullInstallment, bridgeUsdt0,
+  getNextLoanId, pushScoreOnchain, markDefault, liquidateEscrow, recordLoanDefaulted, sendNotification,
 ];
 
 export const TOOL_MAP = Object.fromEntries(ALL_TOOLS.map(t => [t.name, t]));

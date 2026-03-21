@@ -1,7 +1,5 @@
 {
   "$schema": "https://docs.openclaw.ai/config-schema.json",
-  "_comment": "CredAgent OpenClaw configuration — connects agent to WDK via MCP bridge",
-
   "name": "credagent",
   "description": "Autonomous lending protocol agents on Solana",
 
@@ -19,23 +17,17 @@
       "transport": "sse",
       "url": "http://localhost:3100/mcp",
       "tools": [
-        "create_wallet",
-        "get_balance",
-        "send_sol",
-        "send_token",
-        "compute_credit_score",
-        "check_eligibility",
-        "get_default_probability",
-        "lock_collateral",
-        "conditional_disburse",
-        "create_installment_schedule",
-        "pull_installment",
-        "bridge_usdt0"
+        "create_wallet", "get_balance", "send_sol", "send_token",
+        "compute_credit_score", "check_eligibility", "get_default_probability",
+        "get_next_loan_id", "push_score_onchain",
+        "lock_collateral", "conditional_disburse", "create_installment_schedule",
+        "pull_installment", "mark_default", "liquidate_escrow",
+        "record_loan_defaulted", "send_notification", "bridge_usdt0"
       ]
     },
     {
       "name": "wdk-mcp-toolkit",
-      "description": "Official Tether WDK MCP Toolkit for additional wallet tools",
+      "description": "Official Tether WDK MCP Toolkit",
       "transport": "stdio",
       "command": "npx",
       "args": ["@tetherto/wdk-mcp-toolkit"]
@@ -48,21 +40,12 @@
     "collection-tracker",
     "yield-optimizer"
   ],
-
-  "skills_path": "./agent/skills",
+  "skills_path": "./skills",
 
   "safety": {
     "max_tool_calls_per_message": 5,
-    "require_confirmation_for": [
-      "conditional_disburse",
-      "bridge_usdt0"
-    ],
+    "require_confirmation_for": ["conditional_disburse", "bridge_usdt0", "liquidate_escrow"],
     "blocked_tools": [],
     "rate_limit_per_hour": 200
-  },
-
-  "messaging": {
-    "providers": ["telegram", "discord"],
-    "owner_only_commands": ["/pause", "/status", "/audit"]
   }
 }

@@ -5,8 +5,8 @@ import { validate } from '../src/safetyLayer.js';
 import { AuditLog } from '../src/auditLog.js';
 
 describe('Tool definitions', () => {
-  test('defines exactly 12 tools with stable schema metadata', () => {
-    expect(ALL_TOOLS).toHaveLength(12);
+  test('defines tool registry with stable schema metadata', () => {
+    expect(ALL_TOOLS).toHaveLength(18);
     for (const tool of ALL_TOOLS) {
       expect(typeof tool.name).toBe('string');
       expect(typeof tool.description).toBe('string');
@@ -55,6 +55,15 @@ describe('MCP bridge', () => {
       createAgentWallet: jest.fn().mockResolvedValue({ agentId: 'credit-agent', address: '1'.repeat(32), chain: 'solana' }),
       getSolBalance: jest.fn().mockResolvedValue({ token: 'SOL', lamports: '5000000000', sol: '5.000000000' }),
       getTokenBalance: jest.fn().mockResolvedValue({ token: 'mock', rawBalance: '1000000' }),
+      getExternalSolBalance: jest.fn().mockResolvedValue({ token: 'SOL', owner: '1'.repeat(32), lamports: '1', sol: '0.000000001' }),
+      getExternalTokenPosition: jest.fn().mockResolvedValue({
+        token: 'mock',
+        owner: '1'.repeat(32),
+        rawBalance: '1000000',
+        delegatedAmount: '1000000',
+        delegate: '2'.repeat(32),
+        delegationSatisfied: true,
+      }),
       sendSol: jest.fn().mockResolvedValue({ txHash: 'abc123', fee: '5000' }),
       sendToken: jest.fn().mockResolvedValue({ txHash: 'def456', fee: '5000' }),
       getAddress: jest.fn().mockReturnValue('1'.repeat(32)),
@@ -63,11 +72,14 @@ describe('MCP bridge', () => {
       isReady: true,
       bridge: jest.fn().mockResolvedValue({ txHash: 'bridge-tx' }),
     };
-    bridge = new MCPBridge({ walletService, bridgeService }, { rateLimitPerHour: 1000 });
+    bridge = new MCPBridge(
+      { walletService, bridgeService },
+      { rateLimitPerHour: 1000, stateDir: `/tmp/credagent-mcpbridge-test-${Date.now()}-${Math.random()}` },
+    );
   });
 
   test('lists tools for MCP discovery', () => {
-    expect(bridge.getToolList()).toHaveLength(12);
+    expect(bridge.getToolList()).toHaveLength(18);
   });
 
   test('dispatches wallet and bridge tools', async () => {
@@ -79,6 +91,15 @@ describe('MCP bridge', () => {
     await expect(bridge.executeTool('get_balance', { agent_id: 'credit-agent' })).resolves.toMatchObject({
       success: true,
       result: { token: 'SOL' },
+    });
+
+    await expect(bridge.executeTool('get_balance', {
+      address: '11111111111111111111111111111111',
+      token_mint: '11111111111111111111111111111111',
+      delegate_to: '22222222222222222222222222222222',
+    })).resolves.toMatchObject({
+      success: true,
+      result: { delegationSatisfied: true },
     });
 
     await expect(bridge.executeTool('send_token', {
@@ -99,6 +120,13 @@ describe('MCP bridge', () => {
     })).resolves.toMatchObject({
       success: true,
       result: { txHash: 'bridge-tx' },
+    });
+
+    await expect(bridge.executeTool('get_next_loan_id', {
+      agent_id: 'credit-agent',
+    })).resolves.toMatchObject({
+      success: true,
+      result: { loan_id: 1 },
     });
   });
 

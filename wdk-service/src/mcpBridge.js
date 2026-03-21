@@ -22,6 +22,8 @@
 import { TOOL_MAP, ALL_TOOLS } from './toolDefs.js';
 import { validate } from './safetyLayer.js';
 import { AuditLog } from './auditLog.js';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 
 const DEFAULT_ML_API = 'http://localhost:5001';
 const DEFAULT_RATE_LIMIT = 200;
@@ -35,6 +37,9 @@ export class MCPBridge {
   #audit;
   #rateBuckets = new Map();
   #rateLimit;
+  #stateDir;
+  #loanCounterPath;
+  #loanCounterMutex = Promise.resolve();
 
   /**
    * @param {object} services
@@ -52,6 +57,8 @@ export class MCPBridge {
     this.#mlApiUrl = config.mlApiUrl || process.env.ML_API_URL || DEFAULT_ML_API;
     this.#rateLimit = config.rateLimitPerHour || DEFAULT_RATE_LIMIT;
     this.#audit = new AuditLog(config.maxAuditEntries || 10_000);
+    this.#stateDir = config.stateDir || path.resolve(process.cwd(), '.mcp-state');
+    this.#loanCounterPath = path.join(this.#stateDir, 'loan-counter.json');
   }
 
   // ═══════════════════════════════════════
@@ -131,6 +138,12 @@ export class MCPBridge {
         return this.#walletService.createAgentWallet(params.agent_id);
 
       case 'get_balance':
+        if (params.address) {
+          return params.token_mint
+            ? this.#walletService.getExternalTokenPosition(params.address, params.token_mint, params.delegate_to)
+            : this.#walletService.getExternalSolBalance(params.address);
+        }
+        if (!params.agent_id) throw new Error('MISSING_FIELD: get_balance requires "agent_id" or "address"');
         return params.token_mint
           ? this.#walletService.getTokenBalance(params.agent_id, params.token_mint)
           : this.#walletService.getSolBalance(params.agent_id);
@@ -175,17 +188,38 @@ export class MCPBridge {
       case 'lock_collateral':
         return this.#buildProgramCall('lock_collateral', params);
 
-      case 'conditional_disburse': {
-        // AUDIT[S8]: Hash decision reasoning before on-chain storage
-        const hash = await this.#hashReasoning(params.decision_reasoning);
-        return this.#buildProgramCall('conditional_disburse', { ...params, decision_hash: hash });
-      }
+      case 'conditional_disburse':
+        return this.#buildProgramCall('conditional_disburse', params);
 
       case 'create_installment_schedule':
         return this.#buildProgramCall('create_schedule', params);
 
       case 'pull_installment':
         return this.#buildProgramCall('pull_installment', params);
+
+      case 'get_next_loan_id':
+        return this.#reserveNextLoanId();
+
+      case 'push_score_onchain':
+        return this.#buildProgramCall('update_score', params);
+
+      case 'mark_default':
+        return this.#buildProgramCall('mark_default', params);
+
+      case 'liquidate_escrow':
+        return this.#buildProgramCall('liquidate_escrow', params);
+
+      case 'record_loan_defaulted':
+        return this.#buildProgramCall('record_loan_defaulted', params);
+
+      case 'send_notification':
+        return {
+          dispatched: true,
+          recipient: params.recipient,
+          type: params.type,
+          loanId: params.loan_id,
+          status: 'queued',
+        };
 
       case 'bridge_usdt0': {
         if (!this.#bridgeService) throw new Error('Bridge service not configured');
@@ -245,10 +279,14 @@ export class MCPBridge {
    */
   async #buildProgramCall(instruction, params) {
     const agentAddress = this.#walletService.getAddress(params.agent_id);
+    const program =
+      instruction === 'update_score' || instruction === 'record_loan_defaulted'
+        ? 'credit_score_oracle'
+        : 'lending_pool';
 
     return {
       instruction,
-      program: 'lending_pool',
+      program,
       accounts: this.#deriveAccounts(instruction, params),
       args: this.#cleanArgs(instruction, params),
       signer: agentAddress,
@@ -270,6 +308,10 @@ export class MCPBridge {
         return { ...base, schedule: `PDA[schedule, ${params.loan_id}]` };
       case 'pull_installment':
         return { ...base, schedule: `PDA[schedule, ${params.loan_id}]` };
+      case 'update_score':
+        return { ...base, borrower: params.borrower, creditScore: `PDA[credit_score, ${params.borrower}]` };
+      case 'record_loan_defaulted':
+        return { ...base, borrower: params.borrower, creditHistory: `PDA[credit_history, ${params.borrower}]` };
       default:
         return base;
     }
@@ -284,13 +326,6 @@ export class MCPBridge {
   // ═══════════════════════════════════════
   // Helpers
   // ═══════════════════════════════════════
-
-  async #hashReasoning(reasoning) {
-    if (!reasoning || typeof reasoning !== 'string') return Array(32).fill(0);
-    const encoder = new TextEncoder();
-    const buf = await crypto.subtle.digest('SHA-256', encoder.encode(reasoning));
-    return Array.from(new Uint8Array(buf));
-  }
 
   #summarize(result) {
     if (!result) return null;
@@ -308,6 +343,27 @@ export class MCPBridge {
       throw new Error(`RATE_LIMIT: "${agentId}" exceeded ${this.#rateLimit} calls/hour`);
     }
     bucket.push(now);
+  }
+
+  async #reserveNextLoanId() {
+    this.#loanCounterMutex = this.#loanCounterMutex.then(async () => {
+      await mkdir(this.#stateDir, { recursive: true });
+      let nextLoanId = 1;
+
+      try {
+        const raw = await readFile(this.#loanCounterPath, 'utf8');
+        const parsed = JSON.parse(raw);
+        if (Number.isInteger(parsed?.nextLoanId) && parsed.nextLoanId > 0) {
+          nextLoanId = parsed.nextLoanId;
+        }
+      } catch {}
+
+      await writeFile(this.#loanCounterPath, JSON.stringify({ nextLoanId: nextLoanId + 1 }, null, 2));
+      return nextLoanId;
+    });
+
+    const loanId = await this.#loanCounterMutex;
+    return { loan_id: loanId };
   }
 }
 

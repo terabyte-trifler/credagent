@@ -1,0 +1,16 @@
+{
+  "name": "@credagent/agent",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node --experimental-vm-modules ./node_modules/.bin/jest --forceExit",
+    "test:npx": "npx --yes jest@29 --forceExit",
+    "demo": "node src/demo.js"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "@jest/globals": "^29.7.0"
+  }
+}

@@ -173,6 +173,93 @@ export class WalletService {
     return result;
   }
 
+  /**
+   * Get native SOL balance for any external address via raw RPC.
+   * Read-only helper for collection/preflight logic.
+   *
+   * @param {string} address
+   * @returns {Promise<{token: string, lamports: string, sol: string, owner: string}>}
+   */
+  async getExternalSolBalance(address) {
+    validate.solanaAddress(address);
+    const t0 = performance.now();
+
+    const resp = await this.#rpc('getBalance', [address, { commitment: 'confirmed' }]);
+    const lamports = String(resp?.value ?? 0);
+    const result = {
+      token: 'SOL',
+      owner: address,
+      lamports,
+      sol: (Number(lamports) / 1e9).toFixed(9),
+    };
+
+    this.#audit.log('getExternalSolBalance', 'external', {
+      owner: address.slice(0, 8) + '...',
+    }, result.lamports, performance.now() - t0);
+    return result;
+  }
+
+  /**
+   * Inspect an external owner's SPL token position, including delegation.
+   * Read-only helper for installment preflight checks.
+   *
+   * @param {string} ownerAddress
+   * @param {string} tokenMint
+   * @param {string} [delegateTo]
+   * @returns {Promise<{token: string, owner: string, rawBalance: string, delegatedAmount: string, delegate: string|null, delegationSatisfied: boolean|null}>}
+   */
+  async getExternalTokenPosition(ownerAddress, tokenMint, delegateTo = undefined) {
+    validate.solanaAddress(ownerAddress);
+    validate.solanaAddress(tokenMint);
+    if (delegateTo !== undefined) validate.solanaAddress(delegateTo);
+    const t0 = performance.now();
+
+    const resp = await this.#rpc('getTokenAccountsByOwner', [
+      ownerAddress,
+      { mint: tokenMint },
+      { encoding: 'jsonParsed', commitment: 'confirmed' },
+    ]);
+
+    const accounts = resp?.value || [];
+    let rawBalance = 0n;
+    let delegatedAmount = 0n;
+    let delegate = null;
+
+    for (const item of accounts) {
+      const info = item?.account?.data?.parsed?.info;
+      if (!info?.tokenAmount?.amount) continue;
+      rawBalance += BigInt(info.tokenAmount.amount);
+
+      if (info.delegate && info.delegatedAmount?.amount) {
+        const currentDelegated = BigInt(info.delegatedAmount.amount);
+        if (currentDelegated > delegatedAmount) {
+          delegatedAmount = currentDelegated;
+          delegate = info.delegate;
+        }
+      }
+    }
+
+    const result = {
+      token: tokenMint,
+      owner: ownerAddress,
+      rawBalance: String(rawBalance),
+      delegatedAmount: String(delegatedAmount),
+      delegate,
+      delegationSatisfied: delegateTo ? delegate === delegateTo && delegatedAmount > 0n : null,
+    };
+
+    this.#audit.log('getExternalTokenPosition', 'external', {
+      owner: ownerAddress.slice(0, 8) + '...',
+      mint: tokenMint.slice(0, 8) + '...',
+      delegateTo: delegateTo ? delegateTo.slice(0, 8) + '...' : null,
+    }, JSON.stringify({
+      rawBalance: result.rawBalance,
+      delegatedAmount: result.delegatedAmount,
+      delegationSatisfied: result.delegationSatisfied,
+    }), performance.now() - t0);
+    return result;
+  }
+
   // ═══════════════════════════════════════
   // T1B.1 — Send Tokens
   // ═══════════════════════════════════════
@@ -336,6 +423,30 @@ export class WalletService {
     const agent = this.#agents.get(agentId);
     if (!agent) throw new Error(`AGENT_NOT_FOUND: "${agentId}" — create wallet first`);
     return agent;
+  }
+
+  async #rpc(method, params) {
+    const response = await fetch(this.#config.rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: `${method}-${Date.now()}`,
+        method,
+        params,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`RPC_HTTP_ERROR: ${response.status}`);
+    }
+
+    const payload = await response.json();
+    if (payload.error) {
+      throw new Error(`RPC_ERROR: ${payload.error.message || method}`);
+    }
+
+    return payload.result;
   }
 
   /** AUDIT[S8]: Sliding window rate limiter per agent. */
