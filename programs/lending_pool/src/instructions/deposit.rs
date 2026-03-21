@@ -70,6 +70,7 @@ pub struct Withdraw<'info> {
 
 pub fn handler_withdraw(ctx: Context<Withdraw>, amount: u64) -> Result<()> {
     require!(amount > 0, LendError::ZeroAmount);
+    let pool_state_info = ctx.accounts.pool_state.to_account_info();
     let p = &mut ctx.accounts.pool_state;
 
     let available = p.total_deposited.checked_sub(p.total_borrowed).ok_or(LendError::Overflow)?;
@@ -84,7 +85,7 @@ pub fn handler_withdraw(ctx: Context<Withdraw>, amount: u64) -> Result<()> {
         Transfer {
             from: ctx.accounts.pool_vault.to_account_info(),
             to: ctx.accounts.recipient_ata.to_account_info(),
-            authority: ctx.accounts.pool_state.to_account_info(),
+            authority: pool_state_info,
         },
         &[seeds],
     ), amount)?;

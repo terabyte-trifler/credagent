@@ -27,9 +27,12 @@ pub struct InitializePool<'info> {
 }
 
 pub fn handler(ctx: Context<InitializePool>, base_rate_bps: u16) -> Result<()> {
+    let pool_key = ctx.accounts.pool_state.key();
+    let authority_key = ctx.accounts.authority.key();
+    let token_mint_key = ctx.accounts.token_mint.key();
     let p = &mut ctx.accounts.pool_state;
-    p.authority = ctx.accounts.authority.key();
-    p.token_mint = ctx.accounts.token_mint.key();
+    p.authority = authority_key;
+    p.token_mint = token_mint_key;
     p.total_deposited = 0;
     p.total_borrowed = 0;
     p.total_interest_earned = 0;
@@ -46,7 +49,7 @@ pub fn handler(ctx: Context<InitializePool>, base_rate_bps: u16) -> Result<()> {
     p.vault_bump = ctx.bumps.pool_vault;
 
     emit!(PoolInitialized {
-        pool: ctx.accounts.pool_state.key(),
+        pool: pool_key,
         token_mint: p.token_mint,
         authority: p.authority,
     });

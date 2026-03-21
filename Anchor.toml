@@ -6,15 +6,17 @@ solana_version = "2.1.15"
 resolution = true
 skip-lint = false
 
+# Anchor.toml
 [programs.devnet]
-credit_score_oracle = "Cred1111111111111111111111111111111111111111"
-lending_pool = "Lend1111111111111111111111111111111111111111"
-agent_permissions = "Perm1111111111111111111111111111111111111111"
+credit_score_oracle = "49WpJBeDzwbeR1ApMcWkb2A9agTWQMuwVKvc9vnFqJBx"
+lending_pool = "CHh7a34pf33QKEZN1enFS6f2gcXGEU8Nrzo8htfs47gr"
+agent_permissions = "6cKABjL45MFFJPAZ9EbJJjNxbNRJpGUVhbJLFHako39R"
+
 
 [programs.localnet]
-credit_score_oracle = "Cred1111111111111111111111111111111111111111"
-lending_pool = "Lend1111111111111111111111111111111111111111"
-agent_permissions = "Perm1111111111111111111111111111111111111111"
+credit_score_oracle = "49WpJBeDzwbeR1ApMcWkb2A9agTWQMuwVKvc9vnFqJBx"
+lending_pool = "CHh7a34pf33QKEZN1enFS6f2gcXGEU8Nrzo8htfs47gr"
+agent_permissions = "6cKABjL45MFFJPAZ9EbJJjNxbNRJpGUVhbJLFHako39R"
 
 [registry]
 url = "https://api.apr.dev"

@@ -1,6 +1,7 @@
 use anchor_lang::prelude::*;
 
-declare_id!("Perm1111111111111111111111111111111111111111");
+// agent_permissions/src/lib.rs
+declare_id!("6cKABjL45MFFJPAZ9EbJJjNxbNRJpGUVhbJLFHako39R");
 
 // ═══════════════════════════════════════════
 // Seeds & Constants

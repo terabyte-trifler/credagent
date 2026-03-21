@@ -1,10 +1,16 @@
 export function createMcpBridge({ walletService, bridgeService }) {
   const tools = {
-    create_wallet: (input) => walletService.createWallet(input?.label),
-    get_balance: (input) => walletService.getBalance(input?.address),
-    send_tokens: (input) => walletService.sendTokens(input),
-    sign_message: (input) => walletService.signMessage(input?.message ?? ""),
-    bridge_usdt0: (input) => bridgeService.bridgeUsdt0(input),
+    create_wallet: (input) => walletService.createAgentWallet(input?.agentId ?? input?.label),
+    get_sol_balance: (input) => walletService.getSolBalance(input?.agentId),
+    get_token_balance: (input) => walletService.getTokenBalance(input?.agentId, input?.mint),
+    send_sol: (input) => walletService.sendSol(input?.agentId, input?.to, input?.lamports),
+    send_token: (input) => walletService.sendToken(input?.agentId, input?.to, input?.amount, input?.mint),
+    bridge_usdt0: (input) => bridgeService.bridge(
+      input?.targetChain,
+      input?.recipient,
+      input?.tokenAddress,
+      input?.amount,
+    ),
   };
 
   return {

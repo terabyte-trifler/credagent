@@ -1,19 +1,30 @@
 {
-  "name": "wdk-service",
+  "name": "@credagent/wdk-service",
   "version": "1.0.0",
   "type": "module",
-  "main": "src/index.js",
-  "scripts": {
-    "test": "node --test tests/*.test.js",
-    "verify": "node verify-setup.js"
+  "private": true,
+  "engines": {
+    "node": ">=20.0.0"
   },
-  "license": "MIT",
-  "description": "WDK wallet, bridge, and MCP utilities for CredAgent",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --experimental-vm-modules node_modules/.bin/jest --forceExit",
+    "test:coverage": "node --experimental-vm-modules node_modules/.bin/jest --coverage --forceExit",
+    "create-tokens": "node scripts/createTestTokens.js",
+    "verify": "node scripts/verifySetup.js"
+  },
   "dependencies": {
-    "@tetherto/wdk": "^1.0.0-beta.6",
-    "@tetherto/wdk-protocol-bridge-usdt0-evm": "^1.0.0-beta.3",
-    "@tetherto/wdk-wallet-evm": "^1.0.0-beta.10",
-    "@tetherto/wdk-wallet-solana": "^1.0.0-beta.5",
-    "dotenv": "^17.3.1"
+    "@tetherto/wdk": "latest",
+    "@tetherto/wdk-wallet-solana": "latest",
+    "@tetherto/wdk-wallet-evm": "latest",
+    "@tetherto/wdk-protocol-bridge-usdt0-evm": "latest",
+    "@solana/web3.js": "^1.95.0",
+    "@solana/spl-token": "^0.4.0",
+    "dotenv": "^16.4.0",
+    "bs58": "^6.0.0"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "@jest/globals": "^29.7.0"
   }
 }

@@ -6,9 +6,8 @@ pub mod events;
 pub mod instructions;
 
 use instructions::*;
-
-declare_id!("Cred1111111111111111111111111111111111111111");
-
+// credit_score_oracle/src/lib.rs
+declare_id!("49WpJBeDzwbeR1ApMcWkb2A9agTWQMuwVKvc9vnFqJBx");
 #[program]
 pub mod credit_score_oracle {
     use super::*;

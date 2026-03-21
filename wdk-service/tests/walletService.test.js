@@ -1,9 +1,18 @@
-import test from "node:test";
-import assert from "node:assert/strict";
-import { createWalletService } from "../src/walletService.js";
+import { describe, expect, test } from '@jest/globals';
+import { WalletService } from '../src/walletService.js';
+import { generate24WordSeedPhrase } from '../src/seedPhrase.js';
 
-test("wallet service exposes placeholder wallet methods", async () => {
-  const service = createWalletService();
-  const wallet = await service.createWallet("credit-agent");
-  assert.equal(wallet.label, "credit-agent");
+describe('WalletService module smoke test', () => {
+  test('exports the current wallet service class', () => {
+    const service = new WalletService();
+    expect(service).toBeInstanceOf(WalletService);
+    expect(typeof service.createAgentWallet).toBe('function');
+    expect(typeof service.getSolBalance).toBe('function');
+    expect(typeof service.sendToken).toBe('function');
+  });
+
+  test('seed helper returns a 24-word phrase', () => {
+    const seed = generate24WordSeedPhrase();
+    expect(seed.trim().split(/\s+/)).toHaveLength(24);
+  });
 });

@@ -7,7 +7,8 @@ pub mod instructions;
 
 use instructions::*;
 
-declare_id!("Lend1111111111111111111111111111111111111111");
+// lending_pool/src/lib.rs
+declare_id!("CHh7a34pf33QKEZN1enFS6f2gcXGEU8Nrzo8htfs47gr");
 
 #[program]
 pub mod lending_pool {

@@ -12,6 +12,7 @@ dist
 *.seed
 /frontend/node_modules
 /wdk-service/node_modules
+/wdk-service/.test-tokens.env
 /ml-api/venv
 /credagent_programs/target
 /credagent_programs/node_modules

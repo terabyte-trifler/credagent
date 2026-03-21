@@ -56,6 +56,7 @@ pub fn handler_create(
 
     let now = Clock::get()?.unix_timestamp;
     let first_due = now.checked_add(interval_secs).ok_or(LendError::Overflow)?;
+    let schedule_key = ctx.accounts.schedule.key();
 
     let s = &mut ctx.accounts.schedule;
     s.loan_id = loan.loan_id;
@@ -72,7 +73,7 @@ pub fn handler_create(
 
     // Link schedule to loan
     let loan_mut = &mut ctx.accounts.loan;
-    loan_mut.schedule = ctx.accounts.schedule.key();
+    loan_mut.schedule = schedule_key;
 
     emit!(ScheduleCreated {
         loan_id: s.loan_id,
