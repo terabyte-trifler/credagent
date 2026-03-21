@@ -1,7 +1,7 @@
 [package]
 name = "agent-permissions"
-version = "0.1.0"
-description = "Role-based access, spending limits, circuit breaker for CredAgent"
+version = "0.2.0"
+description = "4-tier permission model, circuit breaker, time-locked admin rotation for CredAgent"
 edition = "2021"
 
 [lib]

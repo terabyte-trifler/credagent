@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
-use agent_permissions::{self, AgentIdentity, AgentRole, PermState};
+use agent_permissions::{self, AgentIdentity, AgentRole, PermState, PermissionTier};
 use crate::state::*;
 use crate::errors::LendError;
 use crate::events::LoanDisbursed;
@@ -167,25 +167,20 @@ pub fn handler(
     // ════════════════════════════════════
     // GATE 4: Agent authorized and within spending limit
     // ════════════════════════════════════
-    let verify_ctx = CpiContext::new(
-        ctx.accounts.agent_permissions_program.to_account_info(),
-        agent_permissions::cpi::accounts::VerifyRole {
-            perm_state: ctx.accounts.perm_state.to_account_info(),
-            agent_identity: ctx.accounts.agent_identity.to_account_info(),
-            agent_signer: ctx.accounts.lending_agent.to_account_info(),
-        },
-    );
-    agent_permissions::cpi::verify_role(verify_ctx, AgentRole::Lending)?;
-
     let spend_ctx = CpiContext::new(
         ctx.accounts.agent_permissions_program.to_account_info(),
-        agent_permissions::cpi::accounts::CheckAndSpend {
+        agent_permissions::cpi::accounts::CheckPermissionAndSpend {
             perm_state: ctx.accounts.perm_state.to_account_info(),
             agent_identity: ctx.accounts.agent_identity.to_account_info(),
             agent_signer: ctx.accounts.lending_agent.to_account_info(),
         },
     );
-    agent_permissions::cpi::check_and_spend(spend_ctx, principal)?;
+    agent_permissions::cpi::check_permission_and_spend(
+        spend_ctx,
+        AgentRole::Lending,
+        PermissionTier::Manage,
+        principal,
+    )?;
 
     // ════════════════════════════════════
     // ALL GATES PASSED — Execute disbursement
