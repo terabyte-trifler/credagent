@@ -6,6 +6,12 @@ use crate::events::CreditHistoryUpdated;
 #[derive(Accounts)]
 pub struct RecordLoanEvent<'info> {
     #[account(
+        seeds = [ORACLE_STATE_SEED],
+        bump = oracle_state.bump,
+        constraint = oracle_state.admin == authority.key() @ OracleError::OracleNotAuthorized,
+    )]
+    pub oracle_state: Account<'info, OracleState>,
+    #[account(
         init_if_needed,
         payer = authority,
         space = 8 + CreditHistory::INIT_SPACE,
@@ -22,6 +28,7 @@ pub struct RecordLoanEvent<'info> {
 }
 
 pub fn handler_issued(ctx: Context<RecordLoanEvent>, amount: u64) -> Result<()> {
+    require!(!ctx.accounts.oracle_state.is_paused, OracleError::OraclePaused);
     let h = &mut ctx.accounts.credit_history;
     let now = Clock::get()?.unix_timestamp;
 
@@ -42,6 +49,7 @@ pub fn handler_issued(ctx: Context<RecordLoanEvent>, amount: u64) -> Result<()> 
 }
 
 pub fn handler_repaid(ctx: Context<RecordLoanEvent>, amount: u64) -> Result<()> {
+    require!(!ctx.accounts.oracle_state.is_paused, OracleError::OraclePaused);
     let h = &mut ctx.accounts.credit_history;
     h.repaid_loans = h.repaid_loans.checked_add(1).ok_or(OracleError::ArithmeticOverflow)?;
     h.total_repaid = h.total_repaid.checked_add(amount).ok_or(OracleError::ArithmeticOverflow)?;
@@ -55,6 +63,7 @@ pub fn handler_repaid(ctx: Context<RecordLoanEvent>, amount: u64) -> Result<()> 
 }
 
 pub fn handler_defaulted(ctx: Context<RecordLoanEvent>) -> Result<()> {
+    require!(!ctx.accounts.oracle_state.is_paused, OracleError::OraclePaused);
     let h = &mut ctx.accounts.credit_history;
     h.defaulted_loans = h.defaulted_loans.checked_add(1).ok_or(OracleError::ArithmeticOverflow)?;
     h.last_activity = Clock::get()?.unix_timestamp;

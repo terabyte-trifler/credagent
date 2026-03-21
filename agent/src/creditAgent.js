@@ -99,9 +99,10 @@ export class CreditAssessmentAgent {
       });
 
       if (pushResult.success) {
-        pushStatus = 'PUSHED';
         pushTxHash = pushResult.result?.txHash || pushResult.result?.tx_hash || null;
-        this.#pushTimestamps.set(address, Date.now());
+        pushStatus = pushTxHash ? 'PUSHED' : 'INSTRUCTION_BUILT';
+        pushTxHash = pushResult.result?.txHash || pushResult.result?.tx_hash || null;
+        if (pushTxHash) this.#pushTimestamps.set(address, Date.now());
       } else {
         pushStatus = 'PUSH_FAILED';
         pushError = pushResult.error;

@@ -4,7 +4,7 @@
  * FIX [P3 #7]:
  * - All tests explicitly labeled as unit tests (mock-bridge, no devnet).
  * - Mock bridge updated with handlers for: push_score_onchain, mark_default,
- *   liquidate_escrow, record_loan_defaulted, send_notification.
+ *   liquidate_escrow, send_notification.
  * - New tests added to verify each P1/P2 fix.
  * - No implicit devnet behavior claimed.
  *
@@ -56,8 +56,6 @@ function createMockBridge(overrides = {}) {
           return { success: true, result: { instruction: 'mark_default', status: 'executed' } };
         case 'liquidate_escrow':
           return { success: true, result: { instruction: 'liquidate_escrow', status: 'executed' } };
-        case 'record_loan_defaulted':
-          return { success: true, result: { instruction: 'record_loan_defaulted', status: 'executed' } };
         case 'send_notification':
           return { success: true, result: { sent: true } };
         case 'bridge_usdt0':
@@ -185,10 +183,11 @@ describe('[Unit] LendingDecisionAgent', () => {
   test('P1#2: all 3 steps success → APPROVED', async () => {
     await agent.evaluateLoan(ADDR, 3000, 60);
     const r = await agent.executeLoan(ADDR);
-    expect(r.status).toBe('APPROVED');
+    expect(r.status).toBe('INSTRUCTIONS_BUILT');
     expect(r.steps.lockCollateral.success).toBe(true);
     expect(r.steps.disburse.success).toBe(true);
     expect(r.steps.createSchedule.success).toBe(true);
+    expect(r.onChainConfirmed).toBe(false);
   });
 
   // ── FIX [P2 #6]: loan_id not Date.now(); reasoning hashed before MCP ──
@@ -276,7 +275,7 @@ describe('[Unit] CollectionTrackerAgent', () => {
 
   // ── FIX [P1 #3]: Default flow calls on-chain tools ──
 
-  test('P1#3: triggerDefault calls mark_default + liquidate_escrow + record_loan_defaulted', async () => {
+  test('P1#3: triggerDefault calls mark_default + liquidate_escrow and defers history update', async () => {
     const bridge = createMockBridge({
       pull_installment: async () => ({ success: false, error: 'No funds' }),
     });
@@ -286,13 +285,14 @@ describe('[Unit] CollectionTrackerAgent', () => {
     for (let i = 0; i < 6; i++) await agent.pollOnce();
 
     const s = agent.getScheduleStatus(42);
-    expect(s.status).toBe('DEFAULTED');
+    expect(['DEFAULT_PENDING', 'DEFAULTED']).toContain(s.status);
 
     // Verify on-chain tools were called
     const calls = bridge.toolCalls.map(c => c.name);
     expect(calls).toContain('mark_default');
     expect(calls).toContain('liquidate_escrow');
-    expect(calls).toContain('record_loan_defaulted');
+    expect(calls).not.toContain('record_loan_defaulted');
+    expect(agent.getAuditLog(20).some((e) => e.action === 'HISTORY_DEFERRED')).toBe(true);
   });
 
   test('P1#3: mark_default failure → DEFAULT_FAILED (not silent success)', async () => {
@@ -353,7 +353,7 @@ describe('[Unit] CollectionTrackerAgent', () => {
     const agent = new CollectionTrackerAgent(bridge);
     agent.registerSchedule(schedule);
     const r = await agent.simulateDefaultLifecycle(42);
-    expect(r.finalStatus).toBe('DEFAULTED');
+    expect(['DEFAULT_PENDING', 'DEFAULTED']).toContain(r.finalStatus);
     const calls = bridge.toolCalls.map(c => c.name);
     expect(calls).toContain('mark_default');
     expect(calls).toContain('liquidate_escrow');

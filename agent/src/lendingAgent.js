@@ -3,7 +3,8 @@
  *
  * FIX AUDIT [P1 #2]:
  * - Schedule creation is prevalidated before lock/disburse.
- * - APPROVED only returned when ALL 3 instruction builds succeed.
+ * - APPROVED only returned when all 3 steps are actually submitted/confirmed.
+ * - Build-only flows are labeled INSTRUCTIONS_BUILT, not approved.
  * - No disbursement path proceeds when schedule build already fails.
  *
  * FIX AUDIT [P2 #6]:
@@ -242,13 +243,19 @@ export class LendingDecisionAgent {
       return decision;
     }
 
-    // ALL 3 steps succeeded → APPROVED
+    const hasSubmission =
+      Boolean(steps.lockCollateral?.result?.txHash || steps.lockCollateral?.result?.tx_hash) &&
+      Boolean(steps.disburse?.result?.txHash || steps.disburse?.result?.tx_hash) &&
+      Boolean(steps.createSchedule?.result?.txHash || steps.createSchedule?.result?.tx_hash);
+
+    // ALL 3 steps succeeded → submitted/confirmed or build-only
     session.status = 'EXECUTED';
     const decision = {
-      status: 'APPROVED',
+      status: hasSubmission ? 'APPROVED' : 'INSTRUCTIONS_BUILT',
       borrower: borrowerAddress, score: session.score, tier: session.tier,
       offer, steps, loanId: steps.lockCollateral?.result?.args?.loan_id, negotiationRounds: session.round,
       reasoning, reasoningHash,
+      onChainConfirmed: hasSubmission,
       durationMs: performance.now() - t0,
     };
     this.#decisions.push(decision);

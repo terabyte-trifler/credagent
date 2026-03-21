@@ -1,5 +1,6 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
+use agent_permissions::{self, AgentIdentity, AgentRole, PermState};
 use crate::state::*;
 use crate::errors::LendError;
 use crate::events::LoanDisbursed;
@@ -82,8 +83,26 @@ pub struct ConditionalDisburse<'info> {
     #[account(mut)]
     pub lending_agent: Signer<'info>,
 
+    #[account(
+        seeds = [agent_permissions::PERM_STATE_SEED],
+        bump = perm_state.bump,
+        seeds::program = agent_permissions_program.key(),
+    )]
+    pub perm_state: Account<'info, PermState>,
+
+    #[account(
+        mut,
+        seeds = [agent_permissions::AGENT_IDENTITY_SEED, lending_agent.key().as_ref()],
+        bump = agent_identity.bump,
+        seeds::program = agent_permissions_program.key(),
+        constraint = agent_identity.wallet == lending_agent.key() @ LendError::UnauthorizedAgent,
+    )]
+    pub agent_identity: Account<'info, AgentIdentity>,
+
     /// CHECK: Credit oracle program for cross-program PDA derivation.
     pub credit_oracle_program: UncheckedAccount<'info>,
+
+    pub agent_permissions_program: Program<'info, agent_permissions::program::AgentPermissions>,
 
     pub system_program: Program<'info, System>,
     pub token_program: Program<'info, Token>,
@@ -146,9 +165,27 @@ pub fn handler(
     require!(principal <= available, LendError::InsufficientLiquidity);
 
     // ════════════════════════════════════
-    // GATE 4: Agent authorized (signer check implicit via Signer<'info>)
-    // In production: CPI to agent_permissions.check_and_spend() here
+    // GATE 4: Agent authorized and within spending limit
     // ════════════════════════════════════
+    let verify_ctx = CpiContext::new(
+        ctx.accounts.agent_permissions_program.to_account_info(),
+        agent_permissions::cpi::accounts::VerifyRole {
+            perm_state: ctx.accounts.perm_state.to_account_info(),
+            agent_identity: ctx.accounts.agent_identity.to_account_info(),
+            agent_signer: ctx.accounts.lending_agent.to_account_info(),
+        },
+    );
+    agent_permissions::cpi::verify_role(verify_ctx, AgentRole::Lending)?;
+
+    let spend_ctx = CpiContext::new(
+        ctx.accounts.agent_permissions_program.to_account_info(),
+        agent_permissions::cpi::accounts::CheckAndSpend {
+            perm_state: ctx.accounts.perm_state.to_account_info(),
+            agent_identity: ctx.accounts.agent_identity.to_account_info(),
+            agent_signer: ctx.accounts.lending_agent.to_account_info(),
+        },
+    );
+    agent_permissions::cpi::check_and_spend(spend_ctx, principal)?;
 
     // ════════════════════════════════════
     // ALL GATES PASSED — Execute disbursement

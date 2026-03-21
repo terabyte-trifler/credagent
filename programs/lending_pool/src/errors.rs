@@ -46,4 +46,8 @@ pub enum LendError {
     LoanNotFullyRepaid,
     #[msg("Schedule must be inactive or complete to release")]
     ScheduleStillActive,
+    #[msg("Loan id does not match pool next_loan_id")]
+    LoanIdMismatch,
+    #[msg("Agent is not authorized for this operation")]
+    UnauthorizedAgent,
 }

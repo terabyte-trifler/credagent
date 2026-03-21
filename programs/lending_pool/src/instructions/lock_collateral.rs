@@ -55,6 +55,7 @@ pub struct LockCollateral<'info> {
 pub fn handler(ctx: Context<LockCollateral>, loan_id: u64, amount: u64) -> Result<()> {
     require!(amount > 0, LendError::ZeroAmount);
     require!(!ctx.accounts.pool_state.is_paused, LendError::Paused);
+    require!(loan_id == ctx.accounts.pool_state.next_loan_id, LendError::LoanIdMismatch);
 
     // Transfer collateral from borrower to escrow vault
     token::transfer(CpiContext::new(

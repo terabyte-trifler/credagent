@@ -2,9 +2,10 @@
  * @module CollectionTrackerAgent
  *
  * FIX AUDIT [P1 #3]:
- * - #triggerDefault() now calls mark_default, liquidate_escrow, and
- *   record_loan_defaulted MCP tools on-chain. Status only updated on
- *   tool success. Tool failures return EXECUTION_FAILED.
+ * - #triggerDefault() now calls mark_default and liquidate_escrow only.
+ * - Credit history update is intentionally deferred to an authorized
+ *   admin/program path; the collection agent no longer pretends it can
+ *   write restricted oracle history itself.
  *
  * FIX AUDIT [P2 #5]:
  * - #processInstallment() now calls get_balance to check borrower's
@@ -201,7 +202,7 @@ export class CollectionTrackerAgent {
     if (!liqResult.success) {
       // Default marked but liquidation failed — critical partial state
       this.#log('LIQUIDATION_FAILED', loanId, `liquidate_escrow failed: ${liqResult.error}`);
-      s.status = 'DEFAULTED'; // Default stands, but collateral not seized
+      s.status = 'DEFAULT_PENDING';
       s.isActive = false;
       return {
         loanId, action: 'PARTIAL_DEFAULT',
@@ -212,33 +213,36 @@ export class CollectionTrackerAgent {
       };
     }
 
-    // ═══ STEP 3: record_loan_defaulted on-chain [FIX P1 #3] ═══
-    const historyResult = await this.#mcpBridge.executeTool('record_loan_defaulted', {
-      agent_id: 'collection-agent',
-      borrower: s.borrower,
-    });
+    // ═══ STEP 3: Credit history update deferred ═══
+    const historyResult = {
+      success: false,
+      deferred: true,
+      reason: 'record_loan_defaulted is restricted to an authorized admin/program path',
+    };
+    this.#log('HISTORY_DEFERRED', loanId, historyResult.reason);
 
-    // History recording is non-critical — log but don't fail
-    if (!historyResult.success) {
-      this.#log('HISTORY_WARN', loanId, `record_loan_defaulted failed: ${historyResult.error}`);
-    }
+    const hasSubmission =
+      Boolean(markResult.result?.txHash || markResult.result?.tx_hash) &&
+      Boolean(liqResult.result?.txHash || liqResult.result?.tx_hash);
 
-    s.status = 'DEFAULTED';
+    s.status = hasSubmission ? 'DEFAULTED' : 'DEFAULT_PENDING';
     s.isActive = false;
 
     this.#log('DEFAULTED', loanId,
       `Fully executed on-chain. Outstanding: $${outstanding}. ` +
-      `mark_default: ✓, liquidate_escrow: ✓, history: ${historyResult.success ? '✓' : '✗'}`);
+      `mark_default: ✓, liquidate_escrow: ✓, history: deferred`);
 
     return {
-      loanId, action: 'DEFAULTED',
+      loanId, action: hasSubmission ? 'DEFAULTED' : 'DEFAULT_FLOW_BUILT',
       borrower: s.borrower, outstanding,
       paidInstallments: s.paidInstallments,
       totalInstallments: s.totalInstallments,
+      onChainConfirmed: hasSubmission,
       onChainResults: {
         markDefault: markResult.success,
         liquidateEscrow: liqResult.success,
         recordHistory: historyResult.success,
+        historyDeferred: historyResult.deferred,
       },
     };
   }
