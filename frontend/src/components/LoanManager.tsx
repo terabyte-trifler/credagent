@@ -23,8 +23,9 @@ function ProgressBar({ paid, total }: { paid: number; total: number }) {
   );
 }
 
-export default function LoanManager({ loans }: { loans: Loan[] }) {
+export default function LoanManager({ loans, live = false }: { loans: Loan[]; live?: boolean }) {
   const [expanded, setExpanded] = useState<number | null>(null);
+  const hasSampleData = !live && loans.length > 0;
 
   return (
     <div className="glass p-6">
@@ -32,6 +33,12 @@ export default function LoanManager({ loans }: { loans: Loan[] }) {
         <h2 className="text-base font-semibold text-gray-100">Active loans</h2>
         <span className="text-xs text-gray-500">{loans.filter(l => l.status === 'Active').length} active</span>
       </div>
+
+      {hasSampleData && (
+        <div className="mb-4 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-[11px] text-amber-300">
+          Sample lifecycle data is shown here until a live loan indexer or LendingPool client is wired into the dashboard.
+        </div>
+      )}
 
       <div className="space-y-2">
         {loans.map(loan => {
@@ -91,7 +98,9 @@ export default function LoanManager({ loans }: { loans: Loan[] }) {
         })}
 
         {loans.length === 0 && (
-          <div className="text-center py-12 text-gray-600 text-sm">No loans found</div>
+          <div className="text-center py-12 text-gray-600 text-sm">
+            {live ? 'No live loans found on the lending program' : 'No loans found'}
+          </div>
         )}
       </div>
     </div>

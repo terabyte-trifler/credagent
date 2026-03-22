@@ -245,6 +245,65 @@ describe('MCP HTTP server', () => {
     expect(body.result.token).toBe('SOL');
   });
 
+  test('create_wallet bootstrap bypasses target agent tier deadlock', async () => {
+    await new Promise((resolve) => server.close(resolve));
+
+    let createCalled = false;
+    const fakeMcpBridge = {
+      getToolList: () => [
+        { name: 'create_wallet', description: 'Create wallet', inputSchema: { type: 'object' } },
+      ],
+      getAuditLog: () => [],
+      executeTool: async (_tool, params) => {
+        createCalled = true;
+        return {
+          success: true,
+          result: {
+            agentId: params.agent_id,
+            address: 'Demo111111111111111111111111111111111111111',
+          },
+        };
+      },
+    };
+    const fakeSafety = {
+      isPaused: false,
+      isCircuitBreakerActive: false,
+      getToolTierMap: () => ({ create_wallet: 3 }),
+      getAuditLog: () => [],
+      executeTool: async () => ({ success: false, error: 'should not hit safety' }),
+    };
+
+    ({ server } = createHttpServer(
+      {
+        safety: fakeSafety,
+        mcpBridge: fakeMcpBridge,
+        audit: { getRecent: () => [] },
+        auth: null,
+      },
+      {
+        host: '127.0.0.1',
+        port: 0,
+        allowedOrigins: ['http://127.0.0.1:3000'],
+      },
+    ));
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    baseUrl = `http://127.0.0.1:${address.port}`;
+
+    const res = await fetch(`${baseUrl}/mcp/call`, {
+      method: 'POST',
+      headers: {
+        Origin: 'http://127.0.0.1:3000',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ tool: 'create_wallet', params: { agent_id: 'credit-agent' } }),
+    });
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.success).toBe(true);
+    expect(createCalled).toBe(true);
+  });
+
   test('POST /mcp/call returns blocked tier failure', async () => {
     const res = await fetch(`${baseUrl}/mcp/call`, {
       method: 'POST',

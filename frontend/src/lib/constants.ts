@@ -1,17 +1,18 @@
 import { PublicKey } from '@solana/web3.js';
 
 export const PROGRAM_IDS = {
-  creditOracle: new PublicKey(import.meta.env.VITE_CREDIT_ORACLE_ID || '11111111111111111111111111111111'),
-  lendingPool: new PublicKey(import.meta.env.VITE_LENDING_POOL_ID || '11111111111111111111111111111111'),
-  agentPerms: new PublicKey(import.meta.env.VITE_AGENT_PERMS_ID || '11111111111111111111111111111111'),
+  creditOracle: new PublicKey(import.meta.env.VITE_CREDIT_ORACLE_ID || '4cDu7SCGMzs6etzjJTyUXNXSJ6eRz54cDikSngezabhE'),
+  lendingPool: new PublicKey(import.meta.env.VITE_LENDING_POOL_ID || '8tTaDNjoukk18eAZmxBrB9bo35i4yAAKTpQ3MqZiAoid'),
+  agentPerms: new PublicKey(import.meta.env.VITE_AGENT_PERMS_ID || '57uCTUNFStnMEkGLQT869Qdo5fo9EAqPsp5dn5QWQUqG'),
 };
 
 export const ML_API_URL = import.meta.env.VITE_ML_API_URL || 'http://localhost:5001';
+export const MCP_API_URL = import.meta.env.VITE_MCP_API_URL || 'http://localhost:3100';
 
 // ─── Types ───────────────────────────
 export interface AgentInfo {
   id: string; name: string; role: string; tier: number;
-  status: 'active' | 'idle' | 'paused';
+  status: 'active' | 'idle' | 'paused' | 'error' | 'uninitialized';
   balance: string; opsToday: number; limitUsedPct: number;
   lastAction: string; color: string; icon: string;
 }
@@ -50,6 +51,19 @@ export interface PoolState {
   interestEarned: number; activeLoans: number; defaultRate: number;
   baseRateBps: number;
   source?: 'demo' | 'onchain';
+}
+
+export interface ServiceStatus {
+  name: string;
+  state: 'online' | 'offline';
+  detail: string;
+}
+
+export interface IntegrationGap {
+  key: string;
+  title: string;
+  status: 'ready' | 'pending' | 'blocked';
+  detail: string;
 }
 
 export interface Decision {
@@ -95,4 +109,11 @@ export const MOCK_DECISIONS: Decision[] = [
   { action: 'Installment pulled', agent: 'Collection Agent', status: 'success', timestamp: '1 hr ago', summary: 'Installment 3/6: 500 USDT auto-pulled via delegate', txHash: '9gH1jK…wX3z' },
   { action: 'Limit rejected', agent: 'Lending Agent', status: 'error', timestamp: '2 hr ago', summary: 'Daily limit: 8,500 + 2,000 = 10,500 > 10,000 cap' },
   { action: 'ZK proof verified', agent: 'Credit Agent', status: 'success', timestamp: '3 hr ago', summary: 'Score privacy proof validated (SHA-256 stub)', decisionHash: 'bb12cc…' },
+];
+
+export const LIVE_AGENTS: Omit<AgentInfo, 'status' | 'balance' | 'opsToday' | 'limitUsedPct' | 'lastAction'>[] = [
+  { id: 'credit-agent', name: 'Credit Agent', role: 'Oracle', tier: 1, color: '#a78bfa', icon: 'brain' },
+  { id: 'lending-agent', name: 'Lending Agent', role: 'Lending', tier: 2, color: '#14c972', icon: 'banknote' },
+  { id: 'collection-agent', name: 'Collection Agent', role: 'Collection', tier: 1, color: '#f59e0b', icon: 'clock' },
+  { id: 'yield-agent', name: 'Yield Agent', role: 'Yield', tier: 2, color: '#3b82f6', icon: 'trending-up' },
 ];

@@ -52,6 +52,12 @@ export default function PoolDashboard({ pool }: { pool: PoolState }) {
     <div className="glass p-6">
       <h2 className="text-base font-semibold text-gray-100 mb-4">Pool analytics</h2>
 
+      {pool.source === 'demo' && (
+        <div className="mb-4 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-[11px] text-amber-300">
+          Pool totals and chart history are still synthetic until live LendingPool reads or an indexed metrics API are connected.
+        </div>
+      )}
+
       {/* Utilization hero */}
       <div className="rounded-xl bg-surface-2/60 p-4 mb-4">
         <div className="flex items-end justify-between mb-1">

@@ -11,6 +11,36 @@ const TIER_LABELS = ['Read', 'Operate', 'Manage', 'Admin'];
 function AgentCard({ agent }: { agent: AgentInfo }) {
   const Icon = ICONS[agent.icon] || Shield;
   const active = agent.status === 'active';
+  const paused = agent.status === 'paused';
+  const errored = agent.status === 'error';
+  const uninitialized = agent.status === 'uninitialized';
+  const statusText = active
+    ? 'Live'
+    : paused
+      ? 'Paused'
+      : errored
+        ? 'Error'
+        : uninitialized
+          ? 'Setup needed'
+          : 'Idle';
+  const dotClass = active
+    ? 'bg-cred-500 animate-pulse-ring'
+    : paused
+      ? 'bg-amber-500'
+      : errored
+        ? 'bg-red-500'
+        : uninitialized
+          ? 'bg-blue-500'
+          : 'bg-gray-600';
+  const textClass = active
+    ? 'text-cred-400'
+    : paused
+      ? 'text-amber-400'
+      : errored
+        ? 'text-red-400'
+        : uninitialized
+          ? 'text-blue-400'
+          : 'text-gray-500';
 
   return (
     <div className="glass p-5 hover:border-white/[0.08] transition-all duration-300 group">
@@ -32,9 +62,9 @@ function AgentCard({ agent }: { agent: AgentInfo }) {
           </div>
         </div>
         <div className="flex items-center gap-1.5">
-          <span className={`w-2 h-2 rounded-full ${active ? 'bg-cred-500 animate-pulse-ring' : 'bg-gray-600'}`} />
-          <span className={`text-[11px] font-medium ${active ? 'text-cred-400' : 'text-gray-500'}`}>
-            {agent.status === 'active' ? 'Live' : agent.status === 'paused' ? 'Paused' : 'Idle'}
+          <span className={`w-2 h-2 rounded-full ${dotClass}`} />
+          <span className={`text-[11px] font-medium ${textClass}`}>
+            {statusText}
           </span>
         </div>
       </div>

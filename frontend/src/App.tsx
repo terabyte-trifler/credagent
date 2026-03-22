@@ -18,15 +18,23 @@
 import React, { useState, useCallback } from 'react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import { useWallet } from '@solana/wallet-adapter-react';
+import { AlertCircle, CheckCircle2, Clock3, ServerCog } from 'lucide-react';
 import AgentStatus from './components/AgentStatus';
 import CreditExplorer from './components/CreditExplorer';
 import LoanManager from './components/LoanManager';
 import PoolDashboard from './components/PoolDashboard';
 import { NegotiationChat, DecisionLog, DemoButton } from './components/Widgets';
 import ErrorBoundary from './components/ErrorBoundary';
-import { useDemoRunner } from './hooks/useCredAgent';
 import {
-  MOCK_AGENTS, MOCK_LOANS, MOCK_POOL, MOCK_DECISIONS,
+  useAgentStatus,
+  useDecisionFeed,
+  useDemoRunner,
+  useIntegrationGaps,
+  useLoanBook,
+  useRuntimeStatus,
+} from './hooks/useCredAgent';
+import {
+  MOCK_POOL,
   type ChatMessage,
 } from './lib/constants';
 
@@ -42,6 +50,11 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 export default function App() {
   const { connected, publicKey } = useWallet();
   const demo = useDemoRunner();
+  const { services } = useRuntimeStatus();
+  const { agents } = useAgentStatus();
+  const { decisions } = useDecisionFeed();
+  const { loans, loaded: loanBookLoaded } = useLoanBook();
+  const { gaps } = useIntegrationGaps(services, agents, decisions, loanBookLoaded);
 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     { role: 'agent', text: "I'm the CredAgent Lending Agent. I can evaluate your loan request using your on-chain credit score and negotiate terms. What amount are you looking for?" },
@@ -73,6 +86,8 @@ export default function App() {
     ...demo.log.map(l => ({ role: 'agent' as const, text: l })),
   ];
 
+  const activeAgents = agents.filter(a => a.status === 'active').length;
+
   return (
     <div className="min-h-screen bg-surface-0">
       {/* ═══ Header ═══ */}
@@ -94,13 +109,13 @@ export default function App() {
             {/* Network badge */}
             <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-surface-2 border border-white/[0.04]">
               <span className="w-1.5 h-1.5 rounded-full bg-cred-500 animate-pulse" />
-                <span className="text-[10px] text-gray-400 font-mono">devnet / demo ui</span>
+                <span className="text-[10px] text-gray-400 font-mono">devnet / operator view</span>
             </div>
 
             {/* Agent count */}
             <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-surface-2 border border-white/[0.04]">
               <span className="text-[10px] text-gray-400">
-                {MOCK_AGENTS.filter(a => a.status === 'active').length} demo agents
+                {activeAgents}/4 live agents
               </span>
             </div>
 
@@ -119,11 +134,63 @@ export default function App() {
             currentStep={demo.currentStep} totalSteps={demo.totalSteps} />
         </ErrorBoundary>
 
+        <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="glass p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <ServerCog size={16} className="text-cred-400" />
+              <h2 className="text-base font-semibold text-gray-100">Runtime status</h2>
+            </div>
+            <div className="space-y-2">
+              {services.map(service => (
+                <div key={service.name} className="flex items-center justify-between rounded-xl bg-surface-2/40 px-4 py-3">
+                  <div>
+                    <div className="text-sm text-gray-200">{service.name}</div>
+                    <div className="text-[11px] text-gray-500">{service.detail}</div>
+                  </div>
+                  <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider ${
+                    service.state === 'online'
+                      ? 'bg-cred-500/10 text-cred-400'
+                      : 'bg-red-500/10 text-red-400'
+                  }`}>
+                    {service.state}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="glass p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <AlertCircle size={16} className="text-amber-400" />
+              <h2 className="text-base font-semibold text-gray-100">What’s still missing</h2>
+            </div>
+            <div className="space-y-2">
+              {gaps.map(gap => (
+                <div key={gap.key} className="rounded-xl bg-surface-2/40 px-4 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm text-gray-200">{gap.title}</div>
+                    <span className={`rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-wider ${
+                      gap.status === 'ready'
+                        ? 'bg-cred-500/10 text-cred-400'
+                        : gap.status === 'pending'
+                          ? 'bg-amber-500/10 text-amber-400'
+                          : 'bg-red-500/10 text-red-400'
+                    }`}>
+                      {gap.status}
+                    </span>
+                  </div>
+                  <div className="mt-1 text-[11px] text-gray-500">{gap.detail}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
         {/* T5.1: Agent status */}
         <section>
-          <SectionLabel>Agent status (demo)</SectionLabel>
+          <SectionLabel>Agent runtime</SectionLabel>
           <ErrorBoundary>
-            <AgentStatus agents={MOCK_AGENTS} />
+            <AgentStatus agents={agents} />
           </ErrorBoundary>
         </section>
 
@@ -138,13 +205,13 @@ export default function App() {
         {/* T5.3 + T5.5: Loans + Negotiation (side by side) */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 dashboard-grid">
           <section>
-          <SectionLabel>Active loans (demo)</SectionLabel>
+          <SectionLabel>Active loans</SectionLabel>
             <ErrorBoundary>
-              <LoanManager loans={MOCK_LOANS} />
+              <LoanManager loans={loans} live />
             </ErrorBoundary>
           </section>
           <section>
-          <SectionLabel>Loan negotiation (demo)</SectionLabel>
+          <SectionLabel>Operator negotiation console</SectionLabel>
             <ErrorBoundary>
               <NegotiationChat messages={allMessages} onSend={handleChatSend}
                 loanTerms={{ rateBps: 650, durationDays: 60, collateral: '1.5 XAUT' }} />
@@ -154,7 +221,7 @@ export default function App() {
 
         {/* T5.4: Pool dashboard */}
         <section>
-          <SectionLabel>Pool analytics (demo)</SectionLabel>
+          <SectionLabel>Pool analytics</SectionLabel>
           <ErrorBoundary>
             <PoolDashboard pool={MOCK_POOL} />
           </ErrorBoundary>
@@ -162,9 +229,9 @@ export default function App() {
 
         {/* T5.6: Decision log */}
         <section>
-          <SectionLabel>Agent decisions (demo)</SectionLabel>
+          <SectionLabel>Agent decisions</SectionLabel>
           <ErrorBoundary>
-            <DecisionLog decisions={MOCK_DECISIONS} />
+            <DecisionLog decisions={decisions} />
           </ErrorBoundary>
         </section>
       </main>
@@ -178,9 +245,9 @@ export default function App() {
           <div className="flex items-center gap-3 text-[10px] text-gray-700">
             <span>7 payment primitives</span>
             <span>·</span>
-            <span>4 autonomous agents (demo view)</span>
+            <span>{activeAgents}/4 agent runtimes connected</span>
             <span>·</span>
-            <span>XGBoost ML scoring</span>
+            <span>XGBoost ML scoring + live proof verification</span>
           </div>
         </div>
       </footer>

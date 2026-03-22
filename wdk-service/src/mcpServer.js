@@ -187,6 +187,10 @@ function combineAuditEntries(services, count) {
     .slice(0, limit);
 }
 
+function isBootstrapAdminTool(toolName) {
+  return toolName === 'create_wallet';
+}
+
 function isBuildOnlyResult(result) {
   return (
     result?.success &&
@@ -357,7 +361,9 @@ export function createHttpServer(services, config = {}) {
           });
         }
 
-        const result = await safety.executeTool(body.tool, body.params || {});
+        const result = isBootstrapAdminTool(body.tool)
+          ? await mcpBridge.executeTool(body.tool, body.params || {})
+          : await safety.executeTool(body.tool, body.params || {});
         if (isBuildOnlyResult(result)) {
           return json(res, 409, {
             success: false,
