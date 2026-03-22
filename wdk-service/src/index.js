@@ -17,6 +17,7 @@ export { BridgeService } from './bridgeService.js';
 export { MCPBridge } from './mcpBridge.js';
 export { SafetyMiddleware } from './safetyMiddleware.js';
 export { createServices as createMcpServices, createHttpServer, startServer } from './mcpServer.js';
+export { AuthManager, createAuthFromEnv } from './auth.js';
 export { ALL_TOOLS, TOOL_MAP } from './toolDefs.js';
 export { validate as mcpValidate } from './safetyLayer.js';
 export { AuditLog } from './auditLog.js';

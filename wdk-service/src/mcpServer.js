@@ -2,15 +2,14 @@
  * @module mcpServer
  * @description Standalone MCP SSE server for CredAgent.
  *
- * This is the actual HTTP service that OpenClaw connects to at
- * http://localhost:3100/mcp.
- *
  * Endpoints:
- * - GET  /mcp        SSE stream
- * - POST /mcp/call   direct tool invocation
- * - GET  /mcp/tools  tool discovery
- * - GET  /health     healthcheck
- * - GET  /audit      recent sanitized audit entries
+ * - GET  /mcp         authenticated SSE stream
+ * - POST /mcp/call    authenticated tool invocation
+ * - GET  /mcp/tools   authenticated tool discovery
+ * - POST /auth/token  exchange API key for short-lived session token
+ * - POST /auth/revoke authenticated session revocation
+ * - GET  /health      public healthcheck
+ * - GET  /audit       authenticated audit log access
  */
 
 import http from 'node:http';
@@ -21,11 +20,19 @@ import { TokenOps } from './tokenOps.js';
 import { BridgeService } from './bridgeService.js';
 import { MCPBridge } from './mcpBridge.js';
 import { SafetyMiddleware } from './safetyMiddleware.js';
+import { AuditLog } from './auditLog.js';
+import { createAuthFromEnv } from './auth.js';
 import 'dotenv/config';
 
 const DEFAULT_HOST = process.env.MCP_HOST || '127.0.0.1';
 const DEFAULT_PORT = Number.parseInt(process.env.MCP_PORT || '3100', 10);
 const DEFAULT_ML_API_URL = process.env.ML_API_URL || 'http://localhost:5001';
+const DEFAULT_LOCAL_ORIGINS = [
+  'http://127.0.0.1:3000',
+  'http://localhost:3000',
+  'http://127.0.0.1:3100',
+  'http://localhost:3100',
+];
 
 const DEFAULT_AGENT_TIERS = {
   'credit-agent': 1,
@@ -40,19 +47,42 @@ const DEFAULT_AGENT_LIMITS = {
   'yield-agent': '5000000000',
 };
 
+function isLocalHost(host) {
+  return host === '127.0.0.1' || host === 'localhost';
+}
+
+function parseOriginList(value) {
+  return (value || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+}
+
+function resolveAllowedOrigins(config = {}, host = DEFAULT_HOST) {
+  if (config.allowedOrigins) return [...config.allowedOrigins];
+  const envOrigins = parseOriginList(
+    process.env.MCP_CORS_ORIGINS || process.env.MCP_ALLOWED_ORIGINS || '',
+  );
+  if (envOrigins.length > 0) return envOrigins;
+  return isLocalHost(host) ? [...DEFAULT_LOCAL_ORIGINS] : [];
+}
+
 class SSEManager {
   #clients = new Set();
   #nextId = 1;
 
-  add(res, toolCount) {
+  add(res, toolCount, clientId = 'anonymous') {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
       Connection: 'keep-alive',
       'X-Accel-Buffering': 'no',
-      'Access-Control-Allow-Origin': '*',
     });
-    this.#send(res, 'connected', { id: this.#nextId++, tools: toolCount });
+    this.#send(res, 'connected', {
+      id: this.#nextId++,
+      tools: toolCount,
+      clientId,
+    });
     this.#clients.add(res);
     res.on('close', () => {
       this.#clients.delete(res);
@@ -87,26 +117,48 @@ class SSEManager {
 }
 
 function json(res, status, payload) {
-  res.writeHead(status, {
-    'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': '*',
-  });
+  res.writeHead(status, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(payload));
 }
 
-function cors(res) {
-  res.writeHead(204, {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
-  });
+function applyCorsHeaders(req, res, allowedOrigins, authEnabled) {
+  const origin = req.headers.origin;
+  if (!origin) return true;
+  if (!allowedOrigins.has(origin)) return false;
+  res.setHeader('Access-Control-Allow-Origin', origin);
+  res.setHeader('Vary', 'Origin');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    authEnabled ? 'Content-Type, Authorization' : 'Content-Type',
+  );
+  res.setHeader('Access-Control-Max-Age', '86400');
+  return true;
+}
+
+function cors(req, res, allowedOrigins, authEnabled) {
+  if (!applyCorsHeaders(req, res, allowedOrigins, authEnabled)) {
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: false, error: 'CORS_FORBIDDEN' }));
+    return;
+  }
+  res.writeHead(204);
   res.end();
 }
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
-    req.on('data', (chunk) => chunks.push(chunk));
+    let size = 0;
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > 1024 * 1024) {
+        reject(new Error('Body too large (>1MB)'));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
     req.on('end', () => {
       try {
         const raw = Buffer.concat(chunks).toString() || '{}';
@@ -119,15 +171,36 @@ function readBody(req) {
   });
 }
 
-export async function createServices(config = {}) {
-  const walletService = new WalletService({
-    rpcUrl: config.rpcUrl || process.env.WDK_SOLANA_RPC_URL || 'https://api.devnet.solana.com',
-  });
-  const tokenOps = new TokenOps(
-    walletService,
-    config.rpcUrl || process.env.WDK_SOLANA_RPC_URL || 'https://api.devnet.solana.com',
+function combineAuditEntries(services, count) {
+  const limit = Math.max(1, Math.min(count, 200));
+  const entries = [
+    ...(services.audit?.getRecent ? services.audit.getRecent(limit) : []),
+    ...(services.mcpBridge?.getAuditLog ? services.mcpBridge.getAuditLog(limit) : []),
+    ...(services.safety?.getAuditLog ? services.safety.getAuditLog(limit) : []),
+  ];
+  return entries
+    .sort((a, b) => {
+      const left = String(b.ts || b.isoTime || b.timestamp || '');
+      const right = String(a.ts || a.isoTime || a.timestamp || '');
+      return left.localeCompare(right);
+    })
+    .slice(0, limit);
+}
+
+function isBuildOnlyResult(result) {
+  return (
+    result?.success &&
+    result?.result?.status === 'instruction_built' &&
+    result?.result?.submitted === false
   );
-  const bridgeService = new BridgeService({});
+}
+
+export async function createServices(config = {}) {
+  const audit = config.audit || new AuditLog();
+  const rpcUrl = config.rpcUrl || process.env.WDK_SOLANA_RPC_URL || 'https://api.devnet.solana.com';
+  const walletService = new WalletService({ rpcUrl });
+  const tokenOps = new TokenOps(walletService, rpcUrl, audit);
+  const bridgeService = new BridgeService({ audit });
 
   const mcpBridge = new MCPBridge(
     { walletService, tokenOps, bridgeService },
@@ -143,33 +216,146 @@ export async function createServices(config = {}) {
     safety.registerAgentLimit(agentId, limit);
   }
 
-  return { walletService, tokenOps, bridgeService, mcpBridge, safety };
+  const auth = config.auth !== undefined ? config.auth : createAuthFromEnv(audit);
+
+  return { walletService, tokenOps, bridgeService, mcpBridge, safety, audit, auth };
 }
 
 export function createHttpServer(services, config = {}) {
-  const { safety, mcpBridge } = services;
+  const { safety, mcpBridge, auth } = services;
   const sse = new SSEManager();
   const startedAt = Date.now();
+  const host = config.host || DEFAULT_HOST;
+  const allowedOrigins = new Set(resolveAllowedOrigins(config, host));
+  const authEnabled = auth !== null && auth !== undefined;
+
+  const requireAuth = (req, res) => {
+    if (!authEnabled) {
+      return {
+        authenticated: true,
+        clientId: 'local',
+        public: false,
+        allowedAgents: null,
+        tier: 3,
+      };
+    }
+
+    const authResult = auth.authenticate(req);
+    if (!authResult?.authenticated) {
+      json(res, authResult?.statusCode || 401, {
+        success: false,
+        error: authResult?.error || 'Unauthorized',
+      });
+      return null;
+    }
+    return authResult;
+  };
 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url || '/', `http://${req.headers.host || '127.0.0.1'}`);
     const pathname = url.pathname;
 
-    if (req.method === 'OPTIONS') return cors(res);
+    if (!applyCorsHeaders(req, res, allowedOrigins, authEnabled)) {
+      return json(res, 403, { success: false, error: 'CORS_FORBIDDEN' });
+    }
+
+    if (req.method === 'OPTIONS') return cors(req, res, allowedOrigins, authEnabled);
+
+    if (pathname === '/health' && req.method === 'GET') {
+      return json(res, 200, {
+        status: 'ok',
+        service: 'credagent-mcp',
+        host,
+        port: config.port || DEFAULT_PORT,
+        authEnabled,
+        sseClients: sse.size,
+        paused: safety.isPaused,
+        circuitBreaker: safety.isCircuitBreakerActive,
+        uptime: Math.floor((Date.now() - startedAt) / 1000),
+        ...(authEnabled && auth?.getStats ? { authStats: auth.getStats() } : {}),
+      });
+    }
+
+    if (pathname === '/auth/token' && req.method === 'POST') {
+      if (!authEnabled) {
+        return json(res, 200, {
+          token: 'ses_localhost-mode',
+          note: 'Auth disabled in localhost mode. This token is a no-op.',
+          expiresInSecs: 999999,
+        });
+      }
+
+      const authResult = auth.authenticate(req);
+      if (!authResult?.authenticated) {
+        return json(res, authResult?.statusCode || 401, {
+          success: false,
+          error: authResult?.error || 'Unauthorized',
+        });
+      }
+
+      const session = auth.createSession(authResult);
+      if (session?.error) {
+        return json(res, 400, { success: false, error: session.error });
+      }
+      return json(res, 200, { success: true, ...session });
+    }
+
+    if (pathname === '/auth/revoke' && req.method === 'POST') {
+      if (!authEnabled) {
+        return json(res, 200, { success: true, revoked: false, note: 'Auth disabled' });
+      }
+      const authResult = requireAuth(req, res);
+      if (!authResult) return;
+      try {
+        const body = await readBody(req);
+        return json(res, 200, { success: true, revoked: auth.revokeSession(body.token || '') });
+      } catch (error) {
+        return json(res, 400, { success: false, error: error.message });
+      }
+    }
 
     if (pathname === '/mcp' && req.method === 'GET') {
-      sse.add(res, mcpBridge.getToolList().length);
+      const authResult = requireAuth(req, res);
+      if (!authResult) return;
+      sse.add(res, mcpBridge.getToolList().length, authResult.clientId);
       return;
     }
 
     if (pathname === '/mcp/call' && req.method === 'POST') {
+      const authResult = requireAuth(req, res);
+      if (!authResult) return;
+
       try {
         const body = await readBody(req);
         if (!body?.tool || typeof body.tool !== 'string') {
           return json(res, 400, { success: false, error: 'Missing "tool" field' });
         }
+
+        const agentId = body.params?.agent_id;
+        if (authEnabled && agentId && !auth.isAgentAllowed(authResult, agentId)) {
+          return json(res, 403, {
+            success: false,
+            error: `AGENT_SCOPE: Key "${authResult.clientId}" is not authorized for agent "${agentId}"`,
+            blocked: true,
+          });
+        }
+
         const result = await safety.executeTool(body.tool, body.params || {});
-        sse.broadcast('tool_result', { tool: body.tool, result, ts: Date.now() });
+        if (isBuildOnlyResult(result)) {
+          return json(res, 409, {
+            success: false,
+            error: `BUILD_ONLY_UNAVAILABLE: ${body.tool} requires signer/config not available to the running MCP server`,
+            blocked: true,
+            result: result.result,
+          });
+        }
+
+        sse.broadcast('tool_result', {
+          tool: body.tool,
+          result,
+          clientId: authResult.clientId,
+          ts: Date.now(),
+        });
         return json(res, result.success ? 200 : 422, result);
       } catch (error) {
         return json(res, 400, { success: false, error: error.message });
@@ -177,35 +363,22 @@ export function createHttpServer(services, config = {}) {
     }
 
     if (pathname === '/mcp/tools' && req.method === 'GET') {
+      const authResult = requireAuth(req, res);
+      if (!authResult) return;
       return json(res, 200, {
         tools: mcpBridge.getToolList(),
         tierMap: safety.getToolTierMap(),
         paused: safety.isPaused,
         circuitBreaker: safety.isCircuitBreakerActive,
-      });
-    }
-
-    if (pathname === '/health' && req.method === 'GET') {
-      return json(res, 200, {
-        status: 'ok',
-        service: 'credagent-mcp',
-        host: config.host || DEFAULT_HOST,
-        port: config.port || DEFAULT_PORT,
-        sseClients: sse.size,
-        paused: safety.isPaused,
-        circuitBreaker: safety.isCircuitBreakerActive,
-        uptime: Math.floor((Date.now() - startedAt) / 1000),
+        clientId: authResult.clientId,
       });
     }
 
     if (pathname === '/audit' && req.method === 'GET') {
+      const authResult = requireAuth(req, res);
+      if (!authResult) return;
       const count = Number.parseInt(url.searchParams.get('count') || '50', 10);
-      const mcpEntries = mcpBridge.getAuditLog(Math.max(1, count));
-      const safetyEntries = safety.getAuditLog(Math.max(1, count));
-      const entries = [...mcpEntries, ...safetyEntries]
-        .sort((a, b) => String(b.ts || '').localeCompare(String(a.ts || '')))
-        .slice(0, Math.max(1, count));
-      return json(res, 200, { entries });
+      return json(res, 200, { entries: combineAuditEntries(services, count) });
     }
 
     return json(res, 404, { error: 'Endpoint not found', status: 404 });
@@ -218,7 +391,12 @@ export async function startServer(config = {}) {
   const services = config.services || await createServices(config);
   const host = config.host || DEFAULT_HOST;
   const port = config.port || DEFAULT_PORT;
-  const { server, sse } = createHttpServer(services, { host, port });
+  const allowedOrigins = resolveAllowedOrigins(config, host);
+  if ((host === '0.0.0.0' || host === '::') && allowedOrigins.length === 0) {
+    throw new Error('MCP_CORS_ORIGINS or MCP_ALLOWED_ORIGINS is required when exposing the MCP server beyond localhost');
+  }
+
+  const { server, sse } = createHttpServer(services, { host, port, allowedOrigins });
 
   await new Promise((resolve, reject) => {
     server.once('error', reject);
@@ -257,9 +435,12 @@ export async function startServer(config = {}) {
 const entryPath = process.argv[1] ? path.resolve(process.argv[1]) : null;
 if (entryPath === fileURLToPath(import.meta.url)) {
   startServer()
-    .then(({ url }) => {
+    .then(({ url, services }) => {
+      const authEnabled = services.auth !== null && services.auth !== undefined;
       console.log(`[mcp] listening on ${url}`);
+      console.log(`[mcp] auth: ${authEnabled ? 'enabled' : 'disabled (localhost mode)'}`);
       console.log(`[mcp] sse: ${url}/mcp`);
+      console.log(`[mcp] auth token: ${url}/auth/token`);
       console.log(`[mcp] health: ${url}/health`);
     })
     .catch((error) => {
