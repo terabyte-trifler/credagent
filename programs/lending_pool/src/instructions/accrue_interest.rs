@@ -28,15 +28,20 @@ pub struct AccrueInterest<'info> {
 }
 
 pub fn handler(ctx: Context<AccrueInterest>) -> Result<()> {
-    let p = &mut ctx.accounts.pool_state;
     let now = Clock::get()?.unix_timestamp;
+    let pool_key = ctx.accounts.pool_state.key();
+    accrue_pool_state(&mut ctx.accounts.pool_state, pool_key, now)
+}
 
+/// Accrue the pool's cumulative interest index in-place.
+/// Use this from any instruction that mutates or settles pool debt so
+/// repayments and new loans always observe a fresh interest index.
+pub fn accrue_pool_state(p: &mut PoolState, pool_key: Pubkey, now: i64) -> Result<()> {
     let elapsed = now.saturating_sub(p.last_update_ts);
     if elapsed <= 0 {
-        return Ok(()); // No time passed, nothing to accrue
+        return Ok(());
     }
 
-    // Only accrue if there are active borrows
     if p.total_borrowed == 0 {
         p.last_update_ts = now;
         return Ok(());
@@ -58,7 +63,7 @@ pub fn handler(ctx: Context<AccrueInterest>) -> Result<()> {
     p.last_update_ts = now;
 
     emit!(InterestAccrued {
-        pool: ctx.accounts.pool_state.key(),
+        pool: pool_key,
         old_index,
         new_index,
         elapsed,

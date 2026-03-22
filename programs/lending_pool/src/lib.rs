@@ -90,4 +90,8 @@ pub mod lending_pool {
     pub fn mark_default(ctx: Context<MarkDefault>) -> Result<()> {
         instructions::mark_default::handler(ctx)
     }
+
+    pub fn set_next_loan_id(ctx: Context<SetNextLoanId>, new_next_loan_id: u64) -> Result<()> {
+        instructions::admin::handler_set_next_loan_id(ctx, new_next_loan_id)
+    }
 }

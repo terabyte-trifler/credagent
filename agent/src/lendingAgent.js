@@ -107,15 +107,20 @@ export class LendingDecisionAgent {
       history: [], status: 'OFFERED', lendingPath: constraints.lendingPath,
     });
 
-    return {
+    const decision = {
       status: constraints.lendingPath === 'starter' ? 'STARTER_OFFERED' : 'OFFERED',
+      action: 'loan_evaluated',
+      ts: new Date().toISOString(),
       borrower: borrowerAddress,
       score: score.score,
       tier: constraints.lendingPath === 'starter' ? 'STARTER' : score.risk_tier,
       lendingPath: constraints.lendingPath,
       defaultProbability: pd, offer, maxNegotiationRounds: MAX_NEGOTIATION_ROUNDS,
       durationMs: performance.now() - t0,
+      summary: `Offered $${offer.principal} for ${offer.durationDays}d at ${offer.rateBps} bps`,
     };
+    this.#decisions.push(decision);
+    return decision;
   }
 
   // ═══════════════════════════════════════
@@ -181,11 +186,20 @@ export class LendingDecisionAgent {
       score: session.score, loan_amount_usd: newAmount, duration_days: newDuration,
     });
 
-    return {
+    const decision = {
       status: session.status, round: session.round, maxRounds: MAX_NEGOTIATION_ROUNDS,
+      action: 'loan_negotiated',
+      ts: new Date().toISOString(),
+      borrower: borrowerAddress,
+      tier: session.tier,
       offer: updatedOffer, violations,
       defaultProbability: pdResult.success ? pdResult.result.probability_of_default : session.pd,
+      summary: violations.length
+        ? `Countered to $${updatedOffer.principal} for ${updatedOffer.durationDays}d with ${violations.length} policy adjustment(s)`
+        : `Accepted counter-offer for $${updatedOffer.principal} over ${updatedOffer.durationDays}d`,
     };
+    this.#decisions.push(decision);
+    return decision;
   }
 
   // ═══════════════════════════════════════

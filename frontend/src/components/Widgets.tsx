@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, Play, Loader2, CheckCircle, XCircle, Clock, ExternalLink, ShieldCheck } from 'lucide-react';
+import { Send, Bot, User, CheckCircle, XCircle, Clock, ExternalLink, ShieldCheck } from 'lucide-react';
 import type { ChatMessage, Decision } from '../lib/constants';
 
 export function NegotiationChat({
@@ -28,11 +28,11 @@ export function NegotiationChat({
   };
 
   return (
-    <div className="glass flex flex-col" style={{ height: 460 }}>
+    <div className="glass overflow-hidden flex flex-col" style={{ height: 460 }}>
       {/* Header */}
-      <div className="px-5 py-3 border-b border-white/[0.04] flex items-center justify-between flex-shrink-0">
+      <div className="px-5 py-4 border-b border-white/[0.05] flex items-center justify-between flex-shrink-0 bg-white/[0.02]">
         <div className="flex items-center gap-2">
-          <div className="w-6 h-6 rounded-lg bg-cred-600/20 flex items-center justify-center">
+          <div className="w-7 h-7 rounded-xl bg-cred-600/15 border border-cred-500/20 flex items-center justify-center">
             <Bot size={13} className="text-cred-400" />
           </div>
           <span className="text-sm font-semibold text-gray-200">Loan negotiation</span>
@@ -45,7 +45,7 @@ export function NegotiationChat({
       </div>
 
       {/* Messages */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3 bg-[linear-gradient(180deg,rgba(255,255,255,0.02),transparent)]">
         {messages.map((msg, i) => {
           const isAgent = msg.role === 'agent';
           return (
@@ -56,10 +56,10 @@ export function NegotiationChat({
               }`}>
                 {isAgent ? <Bot size={13} className="text-cred-400" /> : <User size={13} className="text-gray-400" />}
               </div>
-              <div className={`max-w-[75%] px-4 py-2.5 text-[13px] leading-relaxed ${
+              <div className={`max-w-[75%] px-4 py-3 text-[13px] leading-relaxed shadow-[0_14px_30px_rgba(0,0,0,0.18)] ${
                 isAgent
-                  ? 'bg-surface-2 text-gray-300 chat-bubble-agent'
-                  : 'bg-cred-600 text-white chat-bubble-user'
+                  ? 'bg-surface-2 text-gray-300 border border-white/[0.04] chat-bubble-agent'
+                  : 'bg-gradient-to-br from-cred-500 to-cred-700 text-white chat-bubble-user'
               }`}>
                 {msg.text}
               </div>
@@ -69,7 +69,7 @@ export function NegotiationChat({
       </div>
 
       {/* Input */}
-      <div className="p-3 border-t border-white/[0.04] flex gap-2 flex-shrink-0">
+      <div className="p-3 border-t border-white/[0.05] flex gap-2 flex-shrink-0 bg-white/[0.02]">
         <input type="text" value={input} onChange={e => setInput(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && send()}
           placeholder="Negotiate your loan terms…"
@@ -103,13 +103,13 @@ export function DecisionLog({ decisions }: { decisions: Decision[] }) {
         {decisions.map((d, i) => {
           const Icon = STATUS_ICON[d.status] || Clock;
           return (
-            <div key={i} className="flex gap-3 items-start p-3 rounded-xl bg-surface-2/40 hover:bg-surface-2/60 transition-colors">
+            <div key={i} className="metric-tile flex gap-3 items-start hover:bg-white/[0.05] transition-colors">
               <Icon size={15} className={`mt-0.5 flex-shrink-0 ${STATUS_COLOR[d.status] || ''}`} />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-0.5">
                   <span className="text-sm font-medium text-gray-200">{d.action}</span>
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-3 text-gray-500">{d.agent}</span>
-                  <span className="text-[10px] text-gray-600 ml-auto">{d.timestamp}</span>
+                  <span className="text-[10px] text-gray-600 ml-auto text-right whitespace-nowrap" title={d.timestamp}>{d.timestamp}</span>
                 </div>
                 <p className="text-[12px] text-gray-500 truncate">{d.summary}</p>
                 <div className="flex items-center gap-3 mt-1">
@@ -135,48 +135,6 @@ export function DecisionLog({ decisions }: { decisions: Decision[] }) {
           <div className="text-center py-10 text-gray-600 text-sm">No decisions yet</div>
         )}
       </div>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════
-// T5.7: DemoButton — 1-click golden path
-// ═══════════════════════════════════════════
-
-export function DemoButton({
-  onRun, running, currentStep, totalSteps,
-}: {
-  onRun: () => void;
-  running: boolean;
-  currentStep: number;
-  totalSteps: number;
-}) {
-  const pct = totalSteps > 1 ? (currentStep / (totalSteps - 1)) * 100 : 0;
-
-  return (
-    <div className="relative overflow-hidden rounded-2xl">
-      {/* Progress background */}
-      {running && (
-        <div className="absolute inset-0 bg-cred-600/5 transition-all duration-500"
-          style={{ clipPath: `inset(0 ${100 - pct}% 0 0)` }} />
-      )}
-      <button onClick={onRun} disabled={running}
-        className="relative w-full py-5 rounded-2xl border border-cred-600/20 bg-gradient-to-r from-cred-900/30 via-cred-800/10 to-cred-900/30 text-white font-semibold text-sm hover:border-cred-500/40 hover:from-cred-900/50 disabled:cursor-wait transition-all flex items-center justify-center gap-3">
-        {running ? (
-          <>
-            <Loader2 size={18} className="animate-spin text-cred-400" />
-            <span className="text-cred-300">
-              Step {currentStep + 1}/{Math.max(totalSteps, 1)} — Running live backend flow…
-            </span>
-          </>
-        ) : (
-          <>
-            <Play size={18} className="text-cred-400" />
-            <span>Run live backend flow</span>
-            <span className="text-cred-500/60 text-xs ml-1">Score → Evaluate → Execute real MCP steps</span>
-          </>
-        )}
-      </button>
     </div>
   );
 }

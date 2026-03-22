@@ -10,6 +10,7 @@ pub mod repay;
 pub mod release_collateral;
 pub mod liquidate_escrow;
 pub mod mark_default;
+pub mod admin;
 
 pub use initialize_pool::*;
 pub use deposit::*;
@@ -23,4 +24,4 @@ pub use repay::*;
 pub use release_collateral::*;
 pub use liquidate_escrow::*;
 pub use mark_default::*;
-
+pub use admin::*;

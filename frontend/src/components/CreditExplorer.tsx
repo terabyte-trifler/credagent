@@ -39,7 +39,7 @@ function ZkBadge({ hash, status }: { hash?: string; status?: 'stub' | 'verified'
     resolvedStatus === 'verified'
       ? 'verified proof'
       : resolvedStatus === 'stub'
-        ? 'demo placeholder'
+        ? 'proof stub'
         : 'awaiting proof';
   const badgeClass =
     resolvedStatus === 'verified'
@@ -118,15 +118,20 @@ export default function CreditExplorer({ onResult }: { onResult?: (result: Credi
     : [];
 
   return (
-    <div className="glass p-6">
-      <h2 className="text-base font-semibold text-gray-100 mb-4">Credit score explorer</h2>
+    <div className="glass p-6 md:p-7">
+      <div className="mb-4">
+        <h2 className="text-base font-semibold text-gray-100">Credit score explorer</h2>
+        <p className="mt-1 text-[12px] leading-5 text-gray-500">
+          Start here if you want to borrow. Score a wallet first, then negotiate loan terms from the borrower flow below.
+        </p>
+      </div>
 
       {/* Search bar */}
       <div className="flex gap-2 mb-6">
         <select
           value={cluster}
           onChange={e => setCluster(e.target.value as 'devnet' | 'mainnet-beta')}
-          className="rounded-xl bg-surface-2 border border-white/[0.04] px-3 py-2.5 text-sm text-gray-200 outline-none transition-all focus:border-cred-600/30 focus:ring-1 focus:ring-cred-600/50"
+          className="rounded-2xl bg-surface-2 border border-white/[0.05] px-3 py-2.5 text-sm text-gray-200 outline-none transition-all focus:border-cred-600/30 focus:ring-1 focus:ring-cred-600/50"
         >
           <option value="devnet">Devnet</option>
           <option value="mainnet-beta">Mainnet</option>
@@ -172,7 +177,7 @@ export default function CreditExplorer({ onResult }: { onResult?: (result: Credi
                 { label: 'Rate', value: `${(result.recommended_terms.rate_bps / 100).toFixed(1)}%` },
                 { label: 'Max loan', value: `$${result.recommended_terms.max_loan_usd.toLocaleString()}` },
               ].map(t => (
-                <div key={t.label} className="text-center rounded-lg bg-surface-2/60 p-2.5">
+                <div key={t.label} className="metric-tile text-center p-3">
                   <div className="text-[9px] text-gray-500 uppercase tracking-widest">{t.label}</div>
                   <div className="text-sm font-semibold text-gray-200 mt-0.5">{t.value}</div>
                 </div>

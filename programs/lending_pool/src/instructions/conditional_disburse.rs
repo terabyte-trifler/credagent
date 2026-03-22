@@ -4,6 +4,7 @@ use agent_permissions::{self, AgentIdentity, AgentRole, PermState, PermissionTie
 use crate::state::*;
 use crate::errors::LendError;
 use crate::events::LoanDisbursed;
+use crate::instructions::accrue_interest;
 
 const STARTER_MAX_PRINCIPAL: u64 = 100_000_000; // 100 USDT (6 decimals)
 const STARTER_MAX_DURATION_DAYS: u16 = 14;
@@ -123,10 +124,15 @@ pub fn handler(
     require!(interest_rate_bps > 0 && interest_rate_bps <= MAX_INTEREST_RATE_BPS, LendError::RateExceeded);
     require!(duration_days > 0 && duration_days <= MAX_LOAN_DURATION_DAYS, LendError::DurationExceeded);
 
+    let now = Clock::get()?.unix_timestamp;
+    let pool_key = ctx.accounts.pool_state.key();
+    {
+        let pool = &mut ctx.accounts.pool_state;
+        accrue_interest::accrue_pool_state(pool, pool_key, now)?;
+    }
+
     let pool = &ctx.accounts.pool_state;
     require!(!pool.is_paused, LendError::Paused);
-
-    let now = Clock::get()?.unix_timestamp;
 
     // ════════════════════════════════════
     // GATE 1: Valid credit score (not expired, tier >= BB)

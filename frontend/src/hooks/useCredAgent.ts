@@ -9,11 +9,13 @@ import {
   MCP_API_URL,
   ML_API_URL,
   LIVE_AGENTS,
+  POOL_TOKEN_MINT,
   PROGRAM_IDS,
   type AgentInfo,
   type CreditResult,
   type Decision,
   type IntegrationGap,
+  type LiquidityPosition,
   type Loan,
   type PoolState,
   type ServiceStatus,
@@ -110,6 +112,158 @@ export function usePoolState() {
   return { pool, refresh };
 }
 
+export function useLiquidityProvider(pool: PoolState | null) {
+  const { connection } = useConnection();
+  const wallet = useWallet();
+  const [position, setPosition] = useState<LiquidityPosition>({
+    wallet: null,
+    walletBalance: 0,
+    supplied: 0,
+    sharePct: 0,
+    estimatedYield: 0,
+    estimatedApr: 0,
+    loading: false,
+    tokenMint: POOL_TOKEN_MINT,
+    source: 'unavailable',
+  });
+  const [depositing, setDepositing] = useState(false);
+  const [depositError, setDepositError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    const tokenMintValue = POOL_TOKEN_MINT;
+    if (!wallet.publicKey || !tokenMintValue) {
+      setPosition({
+        wallet: wallet.publicKey?.toBase58() || null,
+        walletBalance: 0,
+        supplied: 0,
+        sharePct: 0,
+        estimatedYield: 0,
+        estimatedApr: 0,
+        loading: false,
+        tokenMint: tokenMintValue,
+        source: 'unavailable',
+      });
+      return;
+    }
+
+    setPosition((prev) => ({
+      ...prev,
+      loading: true,
+      wallet: wallet.publicKey!.toBase58(),
+      tokenMint: tokenMintValue,
+    }));
+
+    try {
+      const tokenMint = new PublicKey(tokenMintValue);
+      const depositorAta = await deriveAta(wallet.publicKey, tokenMint);
+      const ataInfo = await connection.getAccountInfo(depositorAta, 'confirmed');
+      const walletBalance = ataInfo
+        ? uiAmountFromTokenBalance(
+            await connection.getTokenAccountBalance(depositorAta, 'confirmed').then((resp) => resp.value),
+          )
+        : 0;
+      const supplied = await estimateDepositorSupplied(connection, wallet.publicKey, tokenMint);
+      const sharePct = pool?.totalDeposited ? Number(((supplied / pool.totalDeposited) * 100).toFixed(2)) : 0;
+      const estimatedYield = Number((((sharePct / 100) * (pool?.interestEarned || 0))).toFixed(2));
+      const estimatedApr = Number((((pool?.utilization || 0) / 100) * ((pool?.baseRateBps || 0) / 100)).toFixed(2));
+
+      setPosition({
+        wallet: wallet.publicKey.toBase58(),
+        walletBalance,
+        supplied,
+        sharePct,
+        estimatedYield,
+        estimatedApr,
+        loading: false,
+        tokenMint: tokenMintValue,
+        source: 'live',
+      });
+    } catch {
+      setPosition({
+        wallet: wallet.publicKey.toBase58(),
+        walletBalance: 0,
+        supplied: 0,
+        sharePct: 0,
+        estimatedYield: 0,
+        estimatedApr: 0,
+        loading: false,
+        tokenMint: tokenMintValue,
+        source: 'unavailable',
+      });
+    }
+  }, [connection, pool?.baseRateBps, pool?.interestEarned, pool?.totalDeposited, pool?.utilization, wallet.publicKey]);
+
+  useEffect(() => {
+    refresh();
+    const timer = window.setInterval(refresh, 20000);
+    return () => window.clearInterval(timer);
+  }, [refresh]);
+
+  const depositLiquidity = useCallback(async (amountUi: number) => {
+    if (!wallet.publicKey || !wallet.sendTransaction) {
+      throw new Error('Connect a wallet to deposit liquidity.');
+    }
+    const tokenMintValue = POOL_TOKEN_MINT;
+    if (!tokenMintValue) {
+      throw new Error('Missing pool token mint configuration.');
+    }
+    const tokenMint = new PublicKey(tokenMintValue);
+    const { poolState, poolVault } = derivePoolAddresses(tokenMint);
+    const depositorAta = await deriveAta(wallet.publicKey, tokenMint);
+    const ataInfo = await connection.getAccountInfo(depositorAta, 'confirmed');
+    if (!ataInfo) {
+      throw new Error('Connected wallet does not have a USDT token account on devnet.');
+    }
+    const balance = await connection.getTokenAccountBalance(depositorAta, 'confirmed');
+    const walletBalance = uiAmountFromTokenBalance(balance.value);
+    if (walletBalance < amountUi) {
+      throw new Error(`Insufficient USDT balance. Wallet has ${walletBalance.toFixed(2)} USDT.`);
+    }
+
+    setDepositing(true);
+    setDepositError(null);
+
+    try {
+      const amountRaw = BigInt(Math.ceil(amountUi * TOKEN_DECIMALS));
+      const depositIx = new TransactionInstruction({
+        programId: PROGRAM_IDS.lendingPool,
+        keys: [
+          { pubkey: poolState, isSigner: false, isWritable: true },
+          { pubkey: poolVault, isSigner: false, isWritable: true },
+          { pubkey: depositorAta, isSigner: false, isWritable: true },
+          { pubkey: wallet.publicKey, isSigner: true, isWritable: true },
+          { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+        ],
+        data: new Uint8Array([
+          ...(await anchorDiscriminator('deposit')),
+          ...encodeAnchorU64(amountRaw),
+        ]) as unknown as Buffer,
+      });
+
+      const tx = new Transaction().add(depositIx);
+      const signature = await wallet.sendTransaction(tx, connection);
+      await connection.confirmTransaction(signature, 'confirmed');
+      await refresh();
+      return { signature, amountUi };
+    } catch (err: any) {
+      const message = err?.message || 'Deposit transaction failed';
+      setDepositError(message);
+      throw new Error(message);
+    } finally {
+      setDepositing(false);
+    }
+  }, [connection, refresh, wallet]);
+
+  return {
+    position,
+    refresh,
+    depositLiquidity,
+    depositing,
+    depositError,
+    clearDepositError: () => setDepositError(null),
+  };
+}
+
 const LOAN_DISCRIMINATOR = Uint8Array.from([20, 195, 70, 117, 165, 227, 182, 1]);
 const SCHEDULE_DISCRIMINATOR = Uint8Array.from([98, 13, 81, 29, 86, 156, 104, 172]);
 const ESCROW_DISCRIMINATOR = Uint8Array.from([192, 99, 212, 219, 136, 109, 242, 184]);
@@ -177,6 +331,70 @@ async function deriveAta(owner: PublicKey, mint: PublicKey) {
     ASSOCIATED_TOKEN_PROGRAM_ID,
   );
   return ata;
+}
+
+function derivePoolAddresses(mint: PublicKey) {
+  const [poolState] = PublicKey.findProgramAddressSync(
+    [new TextEncoder().encode('pool'), mint.toBuffer()],
+    PROGRAM_IDS.lendingPool,
+  );
+  const [poolVault] = PublicKey.findProgramAddressSync(
+    [new TextEncoder().encode('pool_vault'), mint.toBuffer()],
+    PROGRAM_IDS.lendingPool,
+  );
+  return { poolState, poolVault };
+}
+
+function uiAmountFromTokenBalance(balance: any) {
+  return Number(balance?.uiAmountString || balance?.uiAmount || 0);
+}
+
+async function estimateDepositorSupplied(
+  connection: ReturnType<typeof useConnection>['connection'],
+  walletAddress: PublicKey,
+  tokenMint: PublicKey,
+) {
+  const { poolVault } = derivePoolAddresses(tokenMint);
+  const depositorAta = await deriveAta(walletAddress, tokenMint);
+  const signatures = await connection.getSignaturesForAddress(poolVault, { limit: 40 }, 'confirmed');
+  if (!signatures.length) return 0;
+
+  const txs = await connection.getParsedTransactions(
+    signatures.map((entry) => entry.signature),
+    { commitment: 'confirmed', maxSupportedTransactionVersion: 0 },
+  );
+
+  let supplied = 0;
+
+  for (const tx of txs) {
+    if (!tx?.meta) continue;
+    const signerMatches = tx.transaction.message.accountKeys.some((key: any) => {
+      const pubkey = typeof key === 'string' ? key : key.pubkey?.toBase58?.() || key.pubkey;
+      return pubkey === walletAddress.toBase58() && Boolean(key.signer);
+    });
+    if (!signerMatches) continue;
+
+    const accountKeys = tx.transaction.message.accountKeys.map((key: any) =>
+      typeof key === 'string' ? key : key.pubkey?.toBase58?.() || key.pubkey || String(key),
+    );
+    const poolVaultIndex = accountKeys.indexOf(poolVault.toBase58());
+    const depositorAtaIndex = accountKeys.indexOf(depositorAta.toBase58());
+    if (poolVaultIndex < 0 || depositorAtaIndex < 0) continue;
+
+    const prePool = tx.meta.preTokenBalances?.find((entry) => entry.accountIndex === poolVaultIndex);
+    const postPool = tx.meta.postTokenBalances?.find((entry) => entry.accountIndex === poolVaultIndex);
+    const preUser = tx.meta.preTokenBalances?.find((entry) => entry.accountIndex === depositorAtaIndex);
+    const postUser = tx.meta.postTokenBalances?.find((entry) => entry.accountIndex === depositorAtaIndex);
+
+    const poolDelta = uiAmountFromTokenBalance(postPool?.uiTokenAmount) - uiAmountFromTokenBalance(prePool?.uiTokenAmount);
+    const userDelta = uiAmountFromTokenBalance(preUser?.uiTokenAmount) - uiAmountFromTokenBalance(postUser?.uiTokenAmount);
+
+    if (poolDelta > 0 && userDelta > 0) {
+      supplied += Math.min(poolDelta, userDelta);
+    }
+  }
+
+  return Number(supplied.toFixed(6));
 }
 
 function statusLabel(code: number) {
@@ -259,6 +477,27 @@ export function useRuntimeStatus() {
   return { services };
 }
 
+function formatDecisionTimestamp(value: unknown) {
+  const timestamp = typeof value === 'number'
+    ? value
+    : typeof value === 'string'
+      ? Date.parse(value)
+      : Number.NaN;
+
+  if (!Number.isFinite(timestamp)) {
+    return { label: 'Unknown time', timestampMs: undefined as number | undefined };
+  }
+
+  const date = new Date(timestamp);
+  return {
+    label: new Intl.DateTimeFormat('en-IN', {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    }).format(date),
+    timestampMs: timestamp,
+  };
+}
+
 export function useDecisionFeed() {
   const [decisions, setDecisions] = useState<Decision[]>([]);
 
@@ -270,15 +509,21 @@ export function useDecisionFeed() {
         const resp = await fetch(`${MCP_API_URL}/runtime/decisions`);
         if (!resp.ok) throw new Error(String(resp.status));
         const data = await resp.json();
-        const mapped: Decision[] = (data.decisions || []).map((entry: any) => ({
-          action: entry.action || entry.tool || 'Tool call',
-          agent: entry.agent || entry.agentId || entry.agent_id || entry.clientId || 'system',
-          status: entry.status || (entry.success === false ? 'error' : entry.blocked ? 'error' : 'success'),
-          timestamp: entry.timestamp || entry.ts || 'recent',
-          summary: entry.summary || entry.error || entry.status || 'No summary available',
-          txHash: entry.txHash || entry.tx_hash,
-          decisionHash: entry.decisionHash || entry.decision_hash,
-        }));
+        const mapped: Decision[] = (data.decisions || []).map((entry: any) => {
+          const tsValue = entry.timestampMs || entry.timestamp || entry.ts || entry.isoTime || entry.time;
+          const { label, timestampMs } = formatDecisionTimestamp(tsValue);
+
+          return {
+            action: entry.action || entry.tool || entry.operation || 'Tool call',
+            agent: entry.agent || entry.agentId || entry.agent_id || entry.clientId || 'system',
+            status: entry.status || (entry.success === false ? 'error' : entry.blocked ? 'error' : 'success'),
+            timestamp: label,
+            timestampMs,
+            summary: entry.summary || entry.resultSummary || entry.error || entry.status || 'No summary available',
+            txHash: entry.txHash || entry.tx_hash || entry.signature,
+            decisionHash: entry.decisionHash || entry.decision_hash || entry.prevHash,
+          };
+        });
         if (active) setDecisions(mapped);
       } catch {
         if (active) setDecisions([]);
@@ -363,7 +608,7 @@ export function useIntegrationGaps(services: ServiceStatus[], agents: AgentInfo[
         key: 'pool-metrics',
         title: 'Pool analytics',
         status: 'ready',
-        detail: 'Headline pool metrics are reading real PoolState PDAs. Historical charting is hidden until indexed history is available.',
+        detail: 'Headline pool metrics and pool history are live. Depositor balances and yield are shown as wallet-observed estimates until full LP share accounting is implemented.',
       },
       {
         key: 'decision-stream',
@@ -375,54 +620,6 @@ export function useIntegrationGaps(services: ServiceStatus[], agents: AgentInfo[
   }, [services, agents, decisions]);
 
   return { gaps };
-}
-
-/** Demo step runner — explicitly simulates the golden-path lifecycle for UI previews. */
-export function useDemoRunner() {
-  const [running, setRunning] = useState(false);
-  const [currentStep, setCurrentStep] = useState(0);
-  const [log, setLog] = useState<string[]>([]);
-  const [totalSteps, setTotalSteps] = useState(0);
-
-  const run = useCallback(async (request?: { borrower: string; amountUsd?: number; durationDays?: number }) => {
-    if (running) return;
-    if (!request?.borrower) {
-      setLog(['Score a wallet first, then run the live backend flow.']);
-      return;
-    }
-    setRunning(true);
-    setLog([]);
-    setCurrentStep(0);
-    try {
-      const resp = await fetch(`${MCP_API_URL}/demo/run`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          borrower: request.borrower,
-          amountUsd: request.amountUsd ?? 500,
-          durationDays: request.durationDays ?? 30,
-        }),
-      });
-      const payload = await resp.json();
-      if (!resp.ok || payload.success === false) {
-        throw new Error(payload.error || `HTTP ${resp.status}`);
-      }
-      const steps: string[] = payload.steps || [];
-      setTotalSteps(Math.max(steps.length, 1));
-      for (let i = 0; i < steps.length; i++) {
-        setCurrentStep(i);
-        setLog(prev => [...prev, steps[i]]);
-      }
-    } catch (err: any) {
-      setLog([`Live backend demo failed: ${err?.message || 'unknown error'}`]);
-      setTotalSteps(1);
-      setCurrentStep(0);
-    } finally {
-      setRunning(false);
-    }
-  }, [running]);
-
-  return { run, running, currentStep, log, totalSteps };
 }
 
 export function useLoanActions() {
@@ -446,8 +643,7 @@ export function useLoanActions() {
       throw new Error('Connected wallet does not match the borrower for this loan.');
     }
 
-    const tokenMintValue = import.meta.env.VITE_MOCK_USDT_MINT || import.meta.env.VITE_POOL_TOKEN_MINT;
-    if (!tokenMintValue) throw new Error('Missing VITE_MOCK_USDT_MINT or VITE_POOL_TOKEN_MINT for repay flow.');
+    const tokenMintValue = POOL_TOKEN_MINT;
     const tokenMint = new PublicKey(tokenMintValue);
 
     setRepayingLoanId(loan.id);

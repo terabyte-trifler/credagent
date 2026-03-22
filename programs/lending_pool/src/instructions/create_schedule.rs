@@ -3,6 +3,7 @@ use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 use crate::state::*;
 use crate::errors::LendError;
 use crate::events::{ScheduleCreated, InstallmentPulled};
+use crate::instructions::accrue_interest;
 
 // ═══════════════════════════════════════════
 // PAYMENT PRIMITIVE 3: Installment Schedule
@@ -136,8 +137,14 @@ pub struct PullInstallment<'info> {
 }
 
 pub fn handler_pull(ctx: Context<PullInstallment>) -> Result<()> {
-    let s = &ctx.accounts.schedule;
     let now = Clock::get()?.unix_timestamp;
+    let pool_key = ctx.accounts.pool_state.key();
+    {
+        let pool = &mut ctx.accounts.pool_state;
+        accrue_interest::accrue_pool_state(pool, pool_key, now)?;
+    }
+
+    let s = &ctx.accounts.schedule;
 
     // AUDIT: Cannot pull before due date
     require!(now >= s.next_due_date, LendError::NotDue);
@@ -150,7 +157,8 @@ pub fn handler_pull(ctx: Context<PullInstallment>) -> Result<()> {
     // Last installment sweeps remaining loan balance
     let pull_amount = if is_last {
         let loan = &ctx.accounts.loan;
-        loan.principal.checked_sub(loan.repaid_amount).ok_or(LendError::Overflow)?
+        let total_owed = accrue_interest::total_owed(loan, ctx.accounts.pool_state.interest_index)?;
+        total_owed.checked_sub(loan.repaid_amount).ok_or(LendError::Overflow)?
     } else {
         s.amount_per_installment
     };
@@ -182,6 +190,17 @@ pub fn handler_pull(ctx: Context<PullInstallment>) -> Result<()> {
     loan.repaid_amount = loan.repaid_amount
         .checked_add(pull_amount)
         .ok_or(LendError::Overflow)?;
+
+    if s.paid_installments >= s.total_installments {
+        loan.status = LoanStatus::Repaid;
+        let p = &mut ctx.accounts.pool_state;
+        p.total_borrowed = p.total_borrowed.saturating_sub(loan.principal);
+        let interest_earned = loan.repaid_amount.saturating_sub(loan.principal);
+        p.total_interest_earned = p.total_interest_earned
+            .checked_add(interest_earned)
+            .ok_or(LendError::Overflow)?;
+        p.active_loans = p.active_loans.saturating_sub(1);
+    }
 
     emit!(InstallmentPulled {
         loan_id: s.loan_id,

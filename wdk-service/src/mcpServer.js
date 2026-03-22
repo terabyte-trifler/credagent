@@ -242,7 +242,7 @@ function getCollectionAgentAddress(walletService) {
 
 function summarizeDecisionEntry(entry) {
   return {
-    action: entry.action || entry.event || entry.tool || 'Activity',
+    action: entry.action || entry.event || entry.tool || entry.operation || 'Activity',
     agent: entry.agent || entry.agentId || entry.agent_id || entry.clientId || 'system',
     status: entry.status === 'EXECUTION_FAILED' || entry.success === false || entry.blocked
       ? 'error'
@@ -253,6 +253,8 @@ function summarizeDecisionEntry(entry) {
     summary:
       entry.detail ||
       entry.summary ||
+      entry.resultSummary ||
+      entry.errorMsg ||
       entry.error ||
       entry.reason ||
       entry.status ||
@@ -384,6 +386,7 @@ async function fetchLiveLoanRows(walletService) {
     const principalRaw = readU64(body, 104);
     const principal = principalRaw / TOKEN_DECIMALS;
     const rateBps = readU16(body, 112);
+    const startTimeSecs = Number(body.readBigInt64LE(114));
     const dueDateSecs = Number(body.readBigInt64LE(122));
     const repaidRaw = readU64(body, 130);
     const repaid = repaidRaw / TOKEN_DECIMALS;
@@ -407,6 +410,10 @@ async function fetchLiveLoanRows(walletService) {
       installmentAmount = readU64(sched, 74) / TOKEN_DECIMALS;
     }
 
+    if (statusCode === 1 && totalInstallments > 0 && paidInstallments < totalInstallments) {
+      paidInstallments = totalInstallments;
+    }
+
     let collateralMint = null;
     if (escrowInfo) {
       const escrow = Buffer.from(escrowInfo.data).subarray(8);
@@ -418,6 +425,7 @@ async function fetchLiveLoanRows(walletService) {
       borrower,
       principal,
       rateBps,
+      issueTime: new Date(startTimeSecs * 1000).toISOString(),
       dueDate: new Date(dueDateSecs * 1000).toISOString().slice(0, 10),
       repaid,
       status: statusCode === 1 ? 'Repaid' : (statusCode === 2 || statusCode === 3 ? 'Defaulted' : 'Active'),
@@ -457,14 +465,17 @@ class PoolHistoryStore {
       const parsed = JSON.parse(await fs.promises.readFile(this.#filePath, 'utf8'));
       this.#entries = Array.isArray(parsed?.entries) ? parsed.entries.slice(-this.#limit) : [];
     } catch {}
-    await this.capture();
+    await this.capture({ eventType: 'snapshot', eventLabel: 'Initial snapshot' });
     this.#timer = setInterval(() => {
       this.capture().catch(() => {});
     }, this.#intervalMs);
   }
 
-  async capture() {
-    const snapshot = await fetchLivePoolSnapshot(this.#walletService);
+  async capture(eventMeta = {}) {
+    const snapshot = {
+      ...(await fetchLivePoolSnapshot(this.#walletService)),
+      ...eventMeta,
+    };
     this.#entries.push(snapshot);
     this.#entries = this.#entries.slice(-this.#limit);
     await fs.promises.writeFile(this.#filePath, JSON.stringify({ entries: this.#entries }, null, 2));
@@ -809,10 +820,35 @@ export async function createServices(config = {}) {
     if (!walletService.hasWallet(agentId)) {
       await walletService.createAgentWallet(agentId);
     }
+    const meta = DEFAULT_AGENT_META[agentId];
+    audit.log(
+      'agent_runtime_ready',
+      agentId,
+      { role: meta.role, tier: DEFAULT_AGENT_TIERS[agentId] },
+      'Connected to MCP runtime',
+      0,
+      'success',
+    );
   }
 
   await ensureAgentPermissionsRuntime(walletService);
+  audit.log(
+    'permissions_runtime_ready',
+    'system',
+    {},
+    'Agent permissions runtime initialized',
+    0,
+    'success',
+  );
   await poolHistory.init();
+  audit.log(
+    'pool_history_ready',
+    'system',
+    { snapshotIntervalMs: DEFAULT_POOL_SNAPSHOT_MS },
+    'Pool snapshot history initialized',
+    0,
+    'success',
+  );
 
   return {
     walletService,
@@ -1107,6 +1143,17 @@ export function createHttpServer(services, config = {}) {
           } catch (error) {
             historyError = error.message;
           }
+          await services.poolHistory?.capture({
+            eventType: 'loan_issued',
+            eventLabel: 'Loan issued',
+            eventAmount: Number(result.offer.principal),
+            loanId: result.loanId || body.loanId || null,
+            txHash:
+              result?.steps?.disburse?.result?.txHash ||
+              result?.steps?.disburse?.result?.tx_hash ||
+              historyTxHash ||
+              null,
+          });
         }
         return json(res, 200, { success: true, scoreResult, result, historyTxHash, historyError });
       } catch (error) {
@@ -1130,6 +1177,13 @@ export function createHttpServer(services, config = {}) {
           body.borrower,
           amountRaw,
         );
+        await services.poolHistory?.capture({
+          eventType: 'loan_repaid',
+          eventLabel: 'Loan repaid',
+          eventAmount: Number(amountRaw) / TOKEN_DECIMALS,
+          txHash,
+          borrower: body.borrower,
+        });
         return json(res, 200, { success: true, txHash });
       } catch (error) {
         return json(res, 400, { success: false, error: error.message });
@@ -1179,6 +1233,17 @@ export function createHttpServer(services, config = {}) {
           } catch (error) {
             historyError = error.message;
           }
+          await services.poolHistory?.capture({
+            eventType: 'loan_issued',
+            eventLabel: 'Loan issued',
+            eventAmount: Number(execution.offer.principal),
+            loanId: execution.loanId || null,
+            txHash:
+              execution?.steps?.disburse?.result?.txHash ||
+              execution?.steps?.disburse?.result?.tx_hash ||
+              historyTxHash ||
+              null,
+          });
         }
         return json(res, 200, {
           success: true,

@@ -36,12 +36,16 @@ pub struct Repay<'info> {
 pub fn handler(ctx: Context<Repay>, amount: u64) -> Result<()> {
     require!(amount > 0, LendError::ZeroAmount);
 
-    let loan = &ctx.accounts.loan;
-    let pool = &ctx.accounts.pool_state;
+    let now = Clock::get()?.unix_timestamp;
+    let pool_key = ctx.accounts.pool_state.key();
+    {
+        let pool = &mut ctx.accounts.pool_state;
+        accrue_interest::accrue_pool_state(pool, pool_key, now)?;
+    }
 
     // Calculate total owed with streamed interest
-    let total = accrue_interest::total_owed(loan, pool.interest_index)?;
-    let remaining = total.checked_sub(loan.repaid_amount).ok_or(LendError::Overflow)?;
+    let total = accrue_interest::total_owed(&ctx.accounts.loan, ctx.accounts.pool_state.interest_index)?;
+    let remaining = total.checked_sub(ctx.accounts.loan.repaid_amount).ok_or(LendError::Overflow)?;
 
     // AUDIT: Cap payment at remaining balance (no overpayment)
     let pay_amount = core::cmp::min(amount, remaining);

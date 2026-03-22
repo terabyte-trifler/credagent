@@ -6,6 +6,7 @@
     "test": "anchor test --skip-build",
     "test:integration": "anchor test --skip-build",
     "test:security": "ANCHOR_PROVIDER_URL=http://127.0.0.1:8899 ANCHOR_WALLET=$HOME/.config/solana/id.json vitest run --globals tests/security/attack_vectors.ts tests/security/escrow_unauthorized.ts",
+    "demo:prove-yield": "node scripts/prove-main-pool-yield.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint:fix": "prettier */*.js \"*/**/*{.js,.ts}\" -w",
     "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check"
