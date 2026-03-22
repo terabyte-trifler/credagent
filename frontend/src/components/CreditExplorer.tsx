@@ -99,12 +99,14 @@ function ProofDetails({ result }: { result: CreditResult }) {
   );
 }
 
-export default function CreditExplorer() {
+export default function CreditExplorer({ onResult }: { onResult?: (result: CreditResult) => void }) {
   const { score: fetchScore, result, loading, error } = useCreditScore();
   const [address, setAddress] = useState('');
 
-  const handleScore = () => {
-    if (address.length >= 32) fetchScore(address);
+  const handleScore = async () => {
+    if (address.length < 32) return;
+    const scored = await fetchScore(address);
+    if (scored && onResult) onResult(scored);
   };
 
   const radarData = result?.components

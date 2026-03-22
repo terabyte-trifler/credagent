@@ -15,7 +15,7 @@
  * T5.9: Error boundaries, loading, responsive, dark mode, wallet
  */
 
-import React, { useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { AlertCircle, CheckCircle2, Clock3, ServerCog } from 'lucide-react';
@@ -35,6 +35,7 @@ import {
 } from './hooks/useCredAgent';
 import {
   MOCK_POOL,
+  type CreditResult,
   type ChatMessage,
 } from './lib/constants';
 
@@ -55,25 +56,132 @@ export default function App() {
   const { decisions } = useDecisionFeed();
   const { loans, loaded: loanBookLoaded } = useLoanBook();
   const { gaps } = useIntegrationGaps(services, agents, decisions, loanBookLoaded);
+  const [latestCreditResult, setLatestCreditResult] = useState<CreditResult | null>(null);
+  const [negotiationTerms, setNegotiationTerms] = useState<{
+    amountUsd: number;
+    durationDays: number;
+    rateBps: number;
+    collateral: string;
+    round: number;
+  } | null>(null);
 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
-    { role: 'agent', text: "I'm the CredAgent Lending Agent. I can evaluate your loan request using your on-chain credit score and negotiate terms. What amount are you looking for?" },
+    { role: 'agent', text: "I'm the CredAgent Lending Agent. Score a wallet in Credit Explorer first, then tell me the loan amount and duration you want, like '3000 for 60 days'." },
   ]);
+
+  const buildCollateralText = useCallback((amountUsd: number, maxLtvBps: number) => {
+    if (maxLtvBps <= 0) return 'Collateral unavailable';
+    const collateralUsd = amountUsd / (maxLtvBps / 10000);
+    const xaut = collateralUsd / 3000;
+    return `${xaut.toFixed(2)} XAUT`;
+  }, []);
+
+  const parseNegotiationRequest = useCallback((text: string) => {
+    const normalized = text.toLowerCase().replace(/,/g, '');
+    const amountMatch = normalized.match(/\$?\s*(\d{2,6})/);
+    const dayMatch = normalized.match(/(\d{1,3})\s*(day|days|d)\b/);
+    const monthMatch = normalized.match(/(\d{1,2})\s*(month|months|mo)\b/);
+    const amountUsd = amountMatch ? Number(amountMatch[1]) : null;
+    let durationDays = dayMatch ? Number(dayMatch[1]) : null;
+    if (!durationDays && monthMatch) durationDays = Number(monthMatch[1]) * 30;
+    return {
+      amountUsd,
+      durationDays,
+    };
+  }, []);
+
+  const clampOffer = useCallback((amountUsd: number, durationDays: number, credit: CreditResult, round: number) => {
+    const maxLoan = credit.recommended_terms.max_loan_usd;
+    const maxDuration = credit.recommended_terms.max_duration_days || 30;
+    const baseRate = credit.recommended_terms.rate_bps;
+    const cappedAmount = Math.min(amountUsd, maxLoan);
+    const cappedDuration = Math.min(durationDays, maxDuration);
+    const maxDiscount = Math.min(100 * round, 300);
+    const negotiatedRate = Math.max(baseRate - maxDiscount, 200);
+
+    return {
+      amountUsd: cappedAmount,
+      durationDays: cappedDuration,
+      rateBps: negotiatedRate,
+      collateral: buildCollateralText(cappedAmount, credit.recommended_terms.max_ltv_bps),
+      round,
+      changedAmount: cappedAmount !== amountUsd,
+      changedDuration: cappedDuration !== durationDays,
+      changedRate: negotiatedRate !== baseRate,
+    };
+  }, [buildCollateralText]);
 
   const handleChatSend = useCallback((text: string) => {
     setChatMessages(prev => [...prev, { role: 'user', text }]);
-    setTimeout(() => {
-      const isAmount = /\d/.test(text);
+
+    window.setTimeout(() => {
+      if (!latestCreditResult) {
+        setChatMessages(prev => [...prev, {
+          role: 'agent',
+          text: 'I need a fresh wallet score first. Use Credit Explorer, then come back with an amount and duration request.',
+        }]);
+        return;
+      }
+
+      if (latestCreditResult.risk_tier_num <= 0 || latestCreditResult.recommended_terms.max_loan_usd <= 0) {
+        setChatMessages(prev => [...prev, {
+          role: 'agent',
+          text: `This borrower is currently ${latestCreditResult.risk_tier} tier with a score of ${latestCreditResult.score}, so I cannot offer a loan. Improve credit history or add stronger collateral evidence before retrying.`,
+        }]);
+        return;
+      }
+
+      const parsed = parseNegotiationRequest(text);
+      if (!parsed.amountUsd) {
+        setChatMessages(prev => [...prev, {
+          role: 'agent',
+          text: `I have a ${latestCreditResult.risk_tier}-tier borrower loaded. Tell me the amount and duration you want, for example '2500 for 45 days'. Max loan from the score is $${latestCreditResult.recommended_terms.max_loan_usd.toLocaleString()}.`,
+        }]);
+        return;
+      }
+
+      const requestedDuration = parsed.durationDays || negotiationTerms?.durationDays || Math.min(latestCreditResult.recommended_terms.max_duration_days || 30, 60);
+      const nextRound = Math.min((negotiationTerms?.round || 0) + 1, 3);
+      const offer = clampOffer(parsed.amountUsd, requestedDuration, latestCreditResult, nextRound);
+      setNegotiationTerms(offer);
+
+      const notes = [
+        `Borrower tier ${latestCreditResult.risk_tier} (${latestCreditResult.score})`,
+        `Offer: $${offer.amountUsd.toLocaleString()} at ${(offer.rateBps / 100).toFixed(1)}% APR for ${offer.durationDays} days`,
+        `Collateral needed: ${offer.collateral}`,
+      ];
+      if (offer.changedAmount) {
+        notes.push(`Requested amount exceeded score-based max of $${latestCreditResult.recommended_terms.max_loan_usd.toLocaleString()}, so I capped it.`);
+      }
+      if (offer.changedDuration) {
+        notes.push(`Requested duration exceeded max allowed term of ${latestCreditResult.recommended_terms.max_duration_days} days, so I shortened it.`);
+      }
+      if (offer.changedRate) {
+        notes.push(`Round ${offer.round} concession applied: ${((offer.round) * 1).toFixed(0)}.0% discount capped by negotiation policy.`);
+      }
+      if (offer.round >= 3) {
+        notes.push('This is the final negotiation round under the current policy.');
+      } else {
+        notes.push('If you want to counter, send a new amount or duration and I will evaluate one more round.');
+      }
+
       setChatMessages(prev => [...prev, {
         role: 'agent',
-        text: isAmount
-          ? `Based on your AA-tier score (720), I can offer: ${text.includes('3000') || text.includes('3,000')
-            ? '3,000 USDT at 6.5% APR for 60 days. Collateral: 1.5 XAUT (60% LTV). Schedule: 6 × $500 every 10 days. Shall I proceed with these terms?'
-            : `Up to $5,000 USDT at 6.5% APR. What amount and duration work for you?`}`
-          : "Could you specify the loan amount you need? I'll calculate the best terms for your credit tier.",
+        text: notes.join('. ') + '.',
       }]);
-    }, 800);
-  }, []);
+    }, 450);
+  }, [clampOffer, latestCreditResult, negotiationTerms?.durationDays, negotiationTerms?.round, parseNegotiationRequest]);
+
+  useEffect(() => {
+    if (!latestCreditResult) return;
+    setChatMessages([
+      {
+        role: 'agent',
+        text: `Wallet scored at ${latestCreditResult.score} (${latestCreditResult.risk_tier}). Max loan $${latestCreditResult.recommended_terms.max_loan_usd.toLocaleString()}, base rate ${(latestCreditResult.recommended_terms.rate_bps / 100).toFixed(1)}%, max duration ${latestCreditResult.recommended_terms.max_duration_days} days. Tell me what amount and duration you want.`,
+      },
+    ]);
+    setNegotiationTerms(null);
+  }, [latestCreditResult]);
 
   // Feed demo log into chat
   const runDemo = useCallback(async () => {
@@ -198,7 +306,7 @@ export default function App() {
         <section>
           <SectionLabel>Credit scoring</SectionLabel>
           <ErrorBoundary>
-            <CreditExplorer />
+            <CreditExplorer onResult={setLatestCreditResult} />
           </ErrorBoundary>
         </section>
 
@@ -214,7 +322,18 @@ export default function App() {
           <SectionLabel>Operator negotiation console</SectionLabel>
             <ErrorBoundary>
               <NegotiationChat messages={allMessages} onSend={handleChatSend}
-                loanTerms={{ rateBps: 650, durationDays: 60, collateral: '1.5 XAUT' }} />
+                loanTerms={negotiationTerms ? {
+                  rateBps: negotiationTerms.rateBps,
+                  durationDays: negotiationTerms.durationDays,
+                  collateral: negotiationTerms.collateral,
+                } : latestCreditResult ? {
+                  rateBps: latestCreditResult.recommended_terms.rate_bps,
+                  durationDays: latestCreditResult.recommended_terms.max_duration_days,
+                  collateral: buildCollateralText(
+                    Math.max(1, latestCreditResult.recommended_terms.max_loan_usd || 1),
+                    latestCreditResult.recommended_terms.max_ltv_bps,
+                  ),
+                } : null} />
             </ErrorBoundary>
           </section>
         </div>
