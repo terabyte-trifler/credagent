@@ -7,7 +7,8 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "start": "node src/index.js",
+    "start": "node src/mcpServer.js",
+    "start:dev": "node --watch src/mcpServer.js",
     "test": "node --experimental-vm-modules node_modules/.bin/jest --forceExit",
     "test:coverage": "node --experimental-vm-modules node_modules/.bin/jest --coverage --forceExit",
     "create-tokens": "node scripts/createTestTokens.js",
