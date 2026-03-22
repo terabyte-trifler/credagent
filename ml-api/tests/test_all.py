@@ -24,7 +24,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from features import (
-    validate_address, validate_features, extract_features_demo,
+    validate_address, validate_features, extract_features, extract_features_demo,
     features_to_vector, clamp_feature,
     FEATURE_NAMES, NUM_FEATURES, FEATURE_SCHEMA,
 )
@@ -40,6 +40,7 @@ from oracle_push import (
     build_update_score_data, fetch_score, score_and_push,
 )
 from app import app
+from zk_proofs import generate_zk_proof, verify_zk_proof
 
 
 # ═══════════════════════════════════════════
@@ -90,6 +91,15 @@ class TestFeatures:
         f1 = extract_features_demo("11111111111111111111111111111111")
         f2 = extract_features_demo("22222222222222222222222222222222")
         assert f1 != f2
+
+    def test_auto_extract_falls_back_to_demo_when_live_unavailable(self):
+        features, mode = extract_features(
+            "DRpbCBMxVnDK7maPM5tGv6MvB3v1sRMC86PZ8okm21hy",
+            mode="auto",
+            rpc_url="http://127.0.0.1:1",
+        )
+        assert mode == "demo"
+        assert len(features) == 14
 
     def test_validate_features_clamps_values(self):
         raw = {"tx_count_90d": -10, "wallet_age_days": 999999}
@@ -294,6 +304,11 @@ class TestAPI:
         assert "risk_tier" in data
         assert "model_hash" in data
         assert len(data["model_hash"]) == 64
+        assert data["extraction_mode"] == "demo"
+        assert data["zk_proof_status"] == "verified"
+        assert data["zk_proof_scheme"] == "pedersen-schnorr-secp256k1-v1"
+        assert len(data["zk_proof_hash"]) == 64
+        assert isinstance(data["zk_proof"], dict)
 
     def test_score_missing_address(self, client):
         r = client.post("/score", json={})
@@ -345,6 +360,7 @@ class TestAPI:
         assert r.status_code == 200
         data = r.get_json()
         assert len(data["features"]) == 14
+        assert data["extraction_mode"] == "demo"
 
     def test_default_probability_endpoint(self, client):
         r = client.post("/default-probability", json={
@@ -377,6 +393,20 @@ class TestAPI:
         r1 = client.post("/score", json={"address": addr}).get_json()
         r2 = client.post("/score", json={"address": addr}).get_json()
         assert r1["score"] == r2["score"]
+        assert r1["zk_proof_status"] == "verified"
+        assert len(r1["zk_proof_hash"]) == 64
+
+    def test_verify_proof_endpoint(self, client):
+        scored = client.post("/score", json={"address": "DRpbCBMxVnDK7maPM5tGv6MvB3v1sRMC86PZ8okm21hy"}).get_json()
+        r = client.post("/verify-proof", json={
+            "address": scored["address"],
+            "score": scored["score"],
+            "computed_at": scored["computed_at"],
+            "model_hash": scored["model_hash"],
+            "zk_proof": scored["zk_proof"],
+        })
+        assert r.status_code == 200
+        assert r.get_json()["verified"] is True
 
 
 # ═══════════════════════════════════════════
@@ -393,12 +423,47 @@ class TestOraclePush:
             "confidence": 89,
             "risk_tier_num": 3,
             "model_hash": "a" * 64,
+            "computed_at": 1711111111,
+            "features": {"tx_count_90d": 7},
         }
         data = build_update_score_data(score_result)
         assert data["score"] == 720
         assert data["confidence"] == 89
         assert len(data["model_hash"]) == 32  # 32 bytes
         assert len(data["zk_proof_hash"]) == 32
+        assert any(data["zk_proof_hash"])
+
+    def test_real_zk_proof_verifies(self):
+        proof = generate_zk_proof(
+            "DRpbCBMxVnDK7maPM5tGv6MvB3v1sRMC86PZ8okm21hy",
+            720,
+            1711111111,
+            "a" * 64,
+            {"tx_count_90d": 7, "wallet_age_days": 30},
+        )
+        assert verify_zk_proof(
+            proof,
+            "DRpbCBMxVnDK7maPM5tGv6MvB3v1sRMC86PZ8okm21hy",
+            720,
+            1711111111,
+            "a" * 64,
+        ) is True
+
+    def test_real_zk_proof_rejects_tampering(self):
+        proof = generate_zk_proof(
+            "DRpbCBMxVnDK7maPM5tGv6MvB3v1sRMC86PZ8okm21hy",
+            720,
+            1711111111,
+            "a" * 64,
+            {"tx_count_90d": 7, "wallet_age_days": 30},
+        )
+        assert verify_zk_proof(
+            proof,
+            "DRpbCBMxVnDK7maPM5tGv6MvB3v1sRMC86PZ8okm21hy",
+            721,
+            1711111111,
+            "a" * 64,
+        ) is False
 
     def test_build_rejects_bad_hash(self):
         with pytest.raises(ValueError, match="Invalid model_hash"):
@@ -467,3 +532,12 @@ class TestSecurity:
         assert "malicious_field" not in clean
         assert "__proto__" not in clean
         assert len(clean) == 14
+
+    def test_thin_file_wallet_is_not_scored_as_strong_credit(self):
+        thin = {
+            name: 0 for name in FEATURE_NAMES
+        }
+        thin["wallet_age_days"] = 10
+        thin["tx_count_90d"] = 1
+        result = compute_credit_score(thin, 0.20)
+        assert result["score"] < 550

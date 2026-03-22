@@ -31,6 +31,7 @@ import requests
 from pathlib import Path
 
 from dotenv import load_dotenv
+from zk_proofs import generate_zk_proof
 
 load_dotenv()
 
@@ -52,6 +53,20 @@ def log(msg: str, level: str = "INFO"):
     print(line)
     with open(LOG_FILE, "a") as f:
         f.write(line + "\n")
+
+
+def build_zk_proof_hash(score_result: dict) -> str:
+    """
+    Generate a real proof hash if one was not already returned by the ML API.
+    """
+    proof = generate_zk_proof(
+        score_result["address"],
+        int(score_result["score"]),
+        int(score_result.get("computed_at") or score_result.get("timestamp") or time.time()),
+        score_result["model_hash"],
+        score_result.get("features", {}),
+    )
+    return proof["proof_hash"]
 
 
 # ═══════════════════════════════════════════
@@ -120,7 +135,7 @@ def build_update_score_data(score_result: dict) -> dict:
 
     AUDIT:
     - model_hash converted to 32-byte array for on-chain storage
-    - zk_proof_hash is zero bytes (stub) unless ZK proof is provided
+    - zk_proof_hash uses a real proof hash from the API when available
     - All values match Solana program expected types
     """
     model_hash_hex = score_result["model_hash"]
@@ -132,8 +147,10 @@ def build_update_score_data(score_result: dict) -> dict:
     model_hash_bytes = bytes.fromhex(model_hash_hex)
     assert len(model_hash_bytes) == 32, "model_hash must be 32 bytes"
 
-    # ZK proof hash (stub — zero bytes unless real proof provided)
-    zk_proof_hash = bytes(32)
+    zk_hash_hex = score_result.get("zk_proof_hash") or build_zk_proof_hash(score_result)
+    if len(zk_hash_hex) != 64 or not all(c in "0123456789abcdef" for c in zk_hash_hex):
+        raise ValueError(f"Invalid zk_proof_hash: {zk_hash_hex[:16]}...")
+    zk_proof_hash = bytes.fromhex(zk_hash_hex)
 
     return {
         "borrower": score_result["address"],

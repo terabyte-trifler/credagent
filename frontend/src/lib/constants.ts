@@ -20,6 +20,19 @@ export interface CreditResult {
   address: string; score: number; risk_tier: string; risk_tier_num: number;
   confidence: number; default_probability: number; model_hash: string;
   zk_proof_hash?: string;
+  zk_proof_status?: 'stub' | 'verified' | 'missing';
+  zk_proof_scheme?: string;
+  zk_proof?: {
+    scheme: string;
+    statement_hash: string;
+    features_hash: string;
+    commitment: string;
+    announcement: string;
+    response_w: string;
+    response_r: string;
+    proof_hash: string;
+  };
+  extraction_mode?: string;
   recommended_terms: { max_ltv_bps: number; rate_bps: number; max_loan_usd: number; max_duration_days: number };
   components: Record<string, number>;
   features: Record<string, number>;

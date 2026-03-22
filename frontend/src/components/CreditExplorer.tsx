@@ -32,15 +32,68 @@ function ScoreGauge({ score, tier }: { score: number; tier: string }) {
 }
 
 /** T5.8 — ZK Proof Badge */
-function ZkBadge({ hash }: { hash?: string }) {
+function ZkBadge({ hash, status }: { hash?: string; status?: 'stub' | 'verified' | 'missing' }) {
+  const resolvedStatus = status || (hash ? 'stub' : 'missing');
+  const title = resolvedStatus === 'verified' ? 'Credit Verified Privately' : 'ZK Proof Stub';
+  const subtitle =
+    resolvedStatus === 'verified'
+      ? 'verified proof'
+      : resolvedStatus === 'stub'
+        ? 'demo placeholder'
+        : 'awaiting proof';
+  const badgeClass =
+    resolvedStatus === 'verified'
+      ? 'bg-cred-900/20 border-cred-800/30 text-cred-400'
+      : 'bg-amber-900/20 border-amber-800/30 text-amber-400';
+
   return (
-    <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-cred-900/20 border border-cred-800/30">
-      <ShieldCheck size={14} className="text-cred-400 flex-shrink-0" />
+    <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border ${badgeClass}`}>
+      <ShieldCheck size={14} className="flex-shrink-0" />
       <div>
-        <div className="text-[10px] font-semibold text-cred-400 uppercase tracking-wider">Credit Verified Privately</div>
+        <div className="text-[10px] font-semibold uppercase tracking-wider">{title}</div>
         <div className="text-[10px] text-gray-500 font-mono truncate max-w-[200px]">
-          zk: {hash ? hash.slice(0, 24) + '…' : 'awaiting proof'}
+          {subtitle}: {hash ? hash.slice(0, 24) + '…' : 'not available'}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function ProofField({ label, value }: { label: string; value?: string }) {
+  return (
+    <div className="rounded-lg bg-surface-2/50 p-2.5">
+      <div className="text-[9px] text-gray-500 uppercase tracking-widest">{label}</div>
+      <div className="mt-1 break-all font-mono text-[10px] text-gray-300">
+        {value || 'n/a'}
+      </div>
+    </div>
+  );
+}
+
+function ProofDetails({ result }: { result: CreditResult }) {
+  if (!result.zk_proof_hash) return null;
+
+  return (
+    <div className="mt-4 rounded-xl border border-white/[0.05] bg-surface-2/30 p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <div className="text-xs font-semibold text-gray-200">Proof Details</div>
+          <div className="text-[11px] text-gray-500">
+            {result.zk_proof_status === 'verified'
+              ? 'Real proof verified by the API'
+              : 'Proof metadata unavailable'}
+          </div>
+        </div>
+        <div className="rounded-full border border-cred-700/40 bg-cred-900/20 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-cred-300">
+          {result.zk_proof_scheme || 'unknown'}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-2">
+        <ProofField label="Proof Hash" value={result.zk_proof_hash} />
+        <ProofField label="Statement Hash" value={result.zk_proof?.statement_hash} />
+        <ProofField label="Features Hash" value={result.zk_proof?.features_hash} />
+        <ProofField label="Commitment" value={result.zk_proof?.commitment} />
       </div>
     </div>
   );
@@ -115,7 +168,7 @@ export default function CreditExplorer() {
               ))}
             </div>
 
-            <ZkBadge hash={result.zk_proof_hash || result.model_hash} />
+            <ZkBadge hash={result.zk_proof_hash} status={result.zk_proof_status} />
           </div>
 
           {/* Right: Radar chart */}
@@ -136,6 +189,8 @@ export default function CreditExplorer() {
                 {(result.default_probability * 100).toFixed(2)}%
               </span>
             </div>
+
+            <ProofDetails result={result} />
           </div>
         </div>
       )}

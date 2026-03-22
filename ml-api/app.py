@@ -26,7 +26,6 @@ AUDIT:
 
 import os
 import time
-import hashlib
 from functools import wraps
 from collections import defaultdict
 
@@ -36,6 +35,7 @@ from dotenv import load_dotenv
 
 from features import (
     validate_address,
+    extract_features,
     extract_features_demo,
     features_to_vector,
     validate_features,
@@ -57,6 +57,7 @@ from scoring import (
     MIN_SCORE,
     MAX_SCORE,
 )
+from zk_proofs import generate_zk_proof, verify_zk_proof
 
 load_dotenv()
 
@@ -74,6 +75,7 @@ CORS(app, origins=cors_origins.split(","))
 _rate_buckets = defaultdict(list)
 RATE_LIMIT = int(os.getenv("RATE_LIMIT_PER_MIN", "100"))
 MAX_BATCH = 20
+FEATURE_MODE = os.getenv("FEATURE_MODE", "auto")
 
 
 def rate_limit(f):
@@ -98,6 +100,14 @@ def rate_limit(f):
 def error_response(msg: str, code: int = 400):
     """Standardized error response. AUDIT: Never leaks stack traces."""
     return jsonify({"error": msg, "status": code}), code
+
+
+def resolve_features(address: str):
+    """
+    Use live extraction in normal runs and deterministic demo extraction in tests/offline fallback.
+    """
+    mode = "demo" if app.config.get("TESTING") else FEATURE_MODE
+    return extract_features(address, mode=mode)
 
 
 # ═══════════════════════════════════════════
@@ -154,7 +164,7 @@ def score_address():
     if "features" in data and isinstance(data["features"], dict):
         features = validate_features(data["features"])
     else:
-        features = extract_features_demo(address)
+        features, extraction_mode = resolve_features(address)
 
     # ML prediction
     vector = features_to_vector(features)
@@ -162,11 +172,24 @@ def score_address():
 
     # FICO scoring
     result = compute_credit_score(features, default_prob)
+    computed_at = int(time.time())
     result["address"] = address
     result["model_version"] = MODEL_VERSION
     result["model_hash"] = get_model_hash()
     result["features"] = features
-    result["computed_at"] = int(time.time())
+    result["extraction_mode"] = extraction_mode if "extraction_mode" in locals() else "custom"
+    result["computed_at"] = computed_at
+    zk_proof = generate_zk_proof(
+        address,
+        result["score"],
+        computed_at,
+        result["model_hash"],
+        features,
+    )
+    result["zk_proof_hash"] = zk_proof["proof_hash"]
+    result["zk_proof_status"] = "verified"
+    result["zk_proof_scheme"] = zk_proof["scheme"]
+    result["zk_proof"] = zk_proof
 
     return jsonify(result)
 
@@ -200,12 +223,26 @@ def batch_score():
     for addr in addresses:
         try:
             addr = validate_address(addr)
-            features = extract_features_demo(addr)
+            features, extraction_mode = resolve_features(addr)
             vector = features_to_vector(features)
             default_prob = predict_default_probability(vector)
             result = compute_credit_score(features, default_prob)
+            computed_at = int(time.time())
             result["address"] = addr
             result["model_hash"] = get_model_hash()
+            result["extraction_mode"] = extraction_mode
+            result["computed_at"] = computed_at
+            zk_proof = generate_zk_proof(
+                addr,
+                result["score"],
+                computed_at,
+                result["model_hash"],
+                features,
+            )
+            result["zk_proof_hash"] = zk_proof["proof_hash"]
+            result["zk_proof_status"] = "verified"
+            result["zk_proof_scheme"] = zk_proof["scheme"]
+            result["zk_proof"] = zk_proof
             results.append(result)
         except (ValueError, Exception) as e:
             errors.append({"address": str(addr)[:12], "error": str(e)})
@@ -230,13 +267,43 @@ def get_features(address):
     except ValueError as e:
         return error_response(str(e))
 
-    features = extract_features_demo(address)
+    features, extraction_mode = resolve_features(address)
     return jsonify({
         "address": address,
         "features": features,
         "feature_count": len(features),
-        "extraction_mode": "demo",
+        "extraction_mode": extraction_mode,
     })
+
+
+@app.route("/verify-proof", methods=["POST"])
+@rate_limit
+def verify_proof():
+    """Verify a generated ZK proof without revealing private features."""
+    data = request.get_json(silent=True)
+    if not data:
+        return error_response("Missing JSON body")
+
+    required = ["address", "score", "computed_at", "model_hash", "zk_proof"]
+    for field in required:
+        if field not in data:
+            return error_response(f"Missing '{field}' field")
+
+    try:
+        address = validate_address(data["address"])
+        score = int(data["score"])
+        computed_at = int(data["computed_at"])
+        model_hash = str(data["model_hash"])
+        proof = data["zk_proof"]
+    except (TypeError, ValueError):
+        return error_response("Invalid proof verification payload")
+
+    verified = verify_zk_proof(proof, address, score, computed_at, model_hash)
+    return jsonify({
+        "verified": verified,
+        "scheme": proof.get("scheme"),
+        "proof_hash": proof.get("proof_hash"),
+    }), (200 if verified else 400)
 
 
 @app.route("/default-probability", methods=["POST"])

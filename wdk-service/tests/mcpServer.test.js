@@ -165,6 +165,74 @@ describe('MCP HTTP server', () => {
     expect(body.blocked).toBe(true);
   });
 
+  test('client tier is enforced before agent tier checks', async () => {
+    const unrestrictedLowTierKey = 'credagent-unrestricted-low-tier-key-1234567890';
+    const auth = new AuthManager({
+      apiKeys: [unrestrictedLowTierKey],
+      keyConfigs: {
+        [unrestrictedLowTierKey]: {
+          clientId: 'dashboard-low-tier',
+          allowedAgents: null,
+          tier: 1,
+        },
+      },
+      sessionTtlMs: 5_000,
+      tokenSecret: 'd'.repeat(64),
+    });
+
+    await new Promise((resolve) => server.close(resolve));
+    const fakeMcpBridge = {
+      getToolList: () => [
+        { name: 'get_balance', description: 'Read balance', inputSchema: { type: 'object' } },
+        { name: 'conditional_disburse', description: 'Disburse', inputSchema: { type: 'object' } },
+      ],
+      getAuditLog: () => [],
+    };
+    const fakeSafety = {
+      isPaused: false,
+      isCircuitBreakerActive: false,
+      getToolTierMap: () => ({ get_balance: 0, conditional_disburse: 2 }),
+      getAuditLog: () => [],
+      executeTool: async () => ({ success: true, result: { shouldNotRun: true } }),
+    };
+
+    ({ server } = createHttpServer(
+      {
+        safety: fakeSafety,
+        mcpBridge: fakeMcpBridge,
+        audit: { getRecent: () => [] },
+        auth,
+      },
+      {
+        host: '127.0.0.1',
+        port: 0,
+        allowedOrigins: ['http://127.0.0.1:3000'],
+      },
+    ));
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    baseUrl = `http://127.0.0.1:${address.port}`;
+
+    const res = await fetch(`${baseUrl}/mcp/call`, {
+      method: 'POST',
+      headers: {
+        Origin: 'http://127.0.0.1:3000',
+        Authorization: `Bearer ${unrestrictedLowTierKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        tool: 'conditional_disburse',
+        params: { agent_id: 'lending-agent', principal: '1000000' },
+      }),
+    });
+    const body = await res.json();
+    expect(res.status).toBe(403);
+    expect(body.error).toContain('CLIENT_TIER');
+    expect(body.clientTier).toBe(1);
+    expect(body.requiredTier).toBe(2);
+    expect(body.blocked).toBe(true);
+  });
+
   test('POST /mcp/call routes successful tool execution', async () => {
     const res = await fetch(`${baseUrl}/mcp/call`, {
       method: 'POST',

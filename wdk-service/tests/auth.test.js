@@ -99,6 +99,7 @@ describe('AuthManager session tokens', () => {
     const session = auth.createSession(apiAuth);
     const result = auth.authenticate(mockReq('/mcp/call', session.token));
     expect(result.allowedAgents).toEqual(['credit-agent']);
+    expect(result.tier).toBe(1);
   });
 
   test('expired session is rejected', async () => {
@@ -162,6 +163,14 @@ describe('AuthManager brute-force protection and scopes', () => {
     expect(auth.isAgentAllowed(unrestricted, 'yield-agent')).toBe(true);
     expect(auth.isAgentAllowed(restricted, 'credit-agent')).toBe(true);
     expect(auth.isAgentAllowed(restricted, 'lending-agent')).toBe(false);
+  });
+
+  test('auth result preserves client tier for downstream enforcement', () => {
+    const auth = createTestAuth();
+    const unrestricted = auth.authenticate(mockReq('/mcp/call', TEST_KEY));
+    const restricted = auth.authenticate(mockReq('/mcp/call', TEST_KEY_2));
+    expect(unrestricted.tier).toBe(2);
+    expect(restricted.tier).toBe(1);
   });
 });
 

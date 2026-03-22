@@ -2,62 +2,82 @@
 T2A.1 — On-Chain Feature Extraction (14 Categories)
 
 Extracts behavioral features from Solana wallet addresses for credit scoring.
-Each feature category maps to a FICO-equivalent scoring dimension.
+Supports:
+  - live RPC-backed extraction for real wallets
+  - deterministic demo extraction for tests / offline fallback
 
 SECURITY:
 - Address validated as base58 before any processing
 - Feature values clamped to sane ranges (no unbounded outputs)
-- Deterministic seed from address hash for demo consistency
+- Live mode uses public RPC only and fails back to safer defaults
 - No private data stored — all features from public on-chain data
-- No RPC calls in demo mode (uses deterministic simulation)
-
-AUDIT:
-- Every feature has documented range and units
-- No floating-point comparisons for financial decisions (handled in scoring.py)
-- Feature dict is frozen after extraction (immutable)
+- Demo mode remains deterministic for tests
 """
 
 import hashlib
+import json
+import math
+import os
 import re
-from dataclasses import dataclass, field
-from typing import Optional
+import time
+from typing import Iterable
 
 import numpy as np
-
-# ═══════════════════════════════════════════
-# Constants
-# ═══════════════════════════════════════════
+import requests
 
 SOLANA_BASE58_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
+SOLANA_RPC_URL = os.getenv("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
+SOL_USD_FALLBACK = float(os.getenv("SOL_USD_FALLBACK", "150"))
+LIVE_SIGNATURE_LIMIT = int(os.getenv("LIVE_SIGNATURE_LIMIT", "120"))
+LIVE_TX_SAMPLE_LIMIT = int(os.getenv("LIVE_TX_SAMPLE_LIMIT", "40"))
+RPC_CACHE_TTL_SECS = int(os.getenv("RPC_CACHE_TTL_SECS", "300"))
+FEATURE_CACHE_TTL_SECS = int(os.getenv("FEATURE_CACHE_TTL_SECS", "600"))
 
-# 14 feature categories with documented ranges
 FEATURE_SCHEMA = {
-    "tx_count_90d":             {"type": "int",   "min": 0,   "max": 100_000, "desc": "Transactions in last 90 days"},
-    "tx_volume_90d_usd":        {"type": "float", "min": 0.0, "max": 1e9,     "desc": "USD volume in last 90 days"},
-    "wallet_age_days":          {"type": "int",   "min": 0,   "max": 10_000,  "desc": "Days since first transaction"},
-    "defi_protocols_used":      {"type": "int",   "min": 0,   "max": 100,     "desc": "Unique DeFi protocols interacted with"},
-    "total_borrowed_usd":       {"type": "float", "min": 0.0, "max": 1e9,     "desc": "Lifetime USD borrowed across protocols"},
-    "total_repaid_usd":         {"type": "float", "min": 0.0, "max": 1e9,     "desc": "Lifetime USD repaid"},
-    "liquidation_count":        {"type": "int",   "min": 0,   "max": 1000,    "desc": "Number of liquidation events"},
-    "token_diversity":          {"type": "int",   "min": 0,   "max": 500,     "desc": "Unique SPL tokens held (ever)"},
-    "avg_balance_30d_usd":      {"type": "float", "min": 0.0, "max": 1e9,     "desc": "Average USD balance over 30 days"},
-    "payment_regularity":       {"type": "float", "min": 0.0, "max": 1.0,     "desc": "Repayment consistency score (0-1)"},
-    "governance_votes":         {"type": "int",   "min": 0,   "max": 10_000,  "desc": "Number of governance votes cast"},
-    "nft_attestations":         {"type": "int",   "min": 0,   "max": 100,     "desc": "Identity NFTs/SBTs held"},
-    "cross_chain_activity":     {"type": "int",   "min": 0,   "max": 50,      "desc": "Number of chains active on"},
-    "counterparty_reputation":  {"type": "float", "min": 0.0, "max": 1.0,     "desc": "Average reputation of tx partners"},
+    "tx_count_90d": {"type": "int", "min": 0, "max": 100_000, "desc": "Transactions in last 90 days"},
+    "tx_volume_90d_usd": {"type": "float", "min": 0.0, "max": 1e9, "desc": "USD volume in last 90 days"},
+    "wallet_age_days": {"type": "int", "min": 0, "max": 10_000, "desc": "Days since first transaction"},
+    "defi_protocols_used": {"type": "int", "min": 0, "max": 100, "desc": "Unique DeFi protocols interacted with"},
+    "total_borrowed_usd": {"type": "float", "min": 0.0, "max": 1e9, "desc": "Estimated lifetime USD borrowed across protocols"},
+    "total_repaid_usd": {"type": "float", "min": 0.0, "max": 1e9, "desc": "Estimated lifetime USD repaid"},
+    "liquidation_count": {"type": "int", "min": 0, "max": 1000, "desc": "Detected liquidation-like events"},
+    "token_diversity": {"type": "int", "min": 0, "max": 500, "desc": "Unique SPL tokens currently held"},
+    "avg_balance_30d_usd": {"type": "float", "min": 0.0, "max": 1e9, "desc": "Observed USD balance proxy over 30 days"},
+    "payment_regularity": {"type": "float", "min": 0.0, "max": 1.0, "desc": "Repayment consistency score (0-1)"},
+    "governance_votes": {"type": "int", "min": 0, "max": 10_000, "desc": "Governance interactions detected"},
+    "nft_attestations": {"type": "int", "min": 0, "max": 100, "desc": "Identity NFTs/SBT-like holdings"},
+    "cross_chain_activity": {"type": "int", "min": 0, "max": 50, "desc": "Bridge / cross-chain activity count"},
+    "counterparty_reputation": {"type": "float", "min": 0.0, "max": 1.0, "desc": "Observed counterparty quality proxy"},
 }
 
 FEATURE_NAMES = list(FEATURE_SCHEMA.keys())
-NUM_FEATURES = len(FEATURE_NAMES)  # 14
+NUM_FEATURES = len(FEATURE_NAMES)
+
+SYSTEM_PROGRAMS = {
+    "11111111111111111111111111111111",
+    "Vote111111111111111111111111111111111111111",
+    "Stake11111111111111111111111111111111111111",
+    "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+    "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
+    "ComputeBudget111111111111111111111111111111",
+    "AddressLookupTab1e1111111111111111111111111",
+}
+
+DEFI_HINTS = (
+    "margin", "solend", "kamino", "drift", "mango", "port", "francium", "zeta",
+    "cykura", "orca", "raydium", "meteora", "jupiter", "marinade", "flash",
+)
+GOVERNANCE_HINTS = ("realm", "govern", "tribeca", "squad")
+BRIDGE_HINTS = ("worm", "allbridge", "mayan", "portal", "debridge")
+LIQUIDATION_HINTS = ("liquid", "margin", "drift", "solend", "kamino")
+
+_SESSION = requests.Session()
+_RPC_CACHE: dict[tuple[str, str, str], tuple[float, object]] = {}
+_FEATURE_CACHE: dict[tuple[str, str], tuple[float, dict]] = {}
 
 
 def validate_address(address: str) -> str:
-    """
-    Validate Solana base58 address.
-
-    AUDIT: Rejects empty, wrong type, ambiguous chars (0, O, I, l).
-    """
     if not isinstance(address, str):
         raise ValueError(f"Address must be string, got {type(address).__name__}")
     address = address.strip()
@@ -67,100 +87,306 @@ def validate_address(address: str) -> str:
 
 
 def clamp_feature(name: str, value) -> float:
-    """
-    Clamp a feature value to its documented [min, max] range.
-
-    AUDIT: Prevents unbounded values from reaching the ML model.
-    Any out-of-range input is silently clamped (logged in production).
-    """
     schema = FEATURE_SCHEMA.get(name)
     if schema is None:
         raise ValueError(f"Unknown feature: {name}")
-
     if schema["type"] == "int":
         value = int(round(float(value)))
     else:
         value = float(value)
-
     return max(schema["min"], min(schema["max"], value))
 
 
 def validate_features(features: dict) -> dict:
-    """
-    Validate and clamp all features. Returns a clean dict with exactly 14 keys.
-
-    AUDIT:
-    - Missing features filled with 0 (conservative default)
-    - Extra keys silently ignored (no injection)
-    - Every value clamped to documented range
-    """
     clean = {}
     for name in FEATURE_NAMES:
         raw = features.get(name, 0)
         try:
             clean[name] = clamp_feature(name, raw)
         except (ValueError, TypeError):
-            clean[name] = 0  # Safe default on parse failure
+            clean[name] = 0
     return clean
 
 
-# ═══════════════════════════════════════════
-# Feature Extraction (Demo Mode)
-# ═══════════════════════════════════════════
+def _rpc(method: str, params: list, rpc_url: str) -> dict:
+    cache_key = (rpc_url, method, json.dumps(params, sort_keys=True, default=str))
+    now = time.time()
+    cached = _RPC_CACHE.get(cache_key)
+    if cached and now - cached[0] < RPC_CACHE_TTL_SECS:
+        return cached[1]
 
-def extract_features_demo(address: str) -> dict:
+    response = _SESSION.post(
+        rpc_url,
+        json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
+        timeout=20,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if "error" in payload:
+        raise RuntimeError(payload["error"].get("message", "RPC error"))
+    _RPC_CACHE[cache_key] = (now, payload["result"])
+    return payload["result"]
+
+
+def _extract_pubkey(entry) -> str | None:
+    if isinstance(entry, str):
+        return entry
+    if isinstance(entry, dict):
+        return entry.get("pubkey")
+    return None
+
+
+def _program_matches(program_ids: Iterable[str], hints: tuple[str, ...]) -> int:
+    count = 0
+    for program_id in program_ids:
+        lowered = str(program_id).lower()
+        if any(hint in lowered for hint in hints):
+            count += 1
+    return count
+
+
+def _counterparty_score(tx_count_90d: int, protocol_count: int, token_diversity: int, age_days: int) -> float:
+    return max(
+        0.0,
+        min(
+            1.0,
+            0.05
+            + min(tx_count_90d / 300, 1.0) * 0.35
+            + min(protocol_count / 8, 1.0) * 0.30
+            + min(token_diversity / 12, 1.0) * 0.15
+            + min(age_days / 730, 1.0) * 0.15,
+        ),
+    )
+
+
+def _regularity_score(recent_timestamps: list[int], borrowed_usd: float, repaid_usd: float) -> float:
+    if borrowed_usd <= 0:
+        return 0.0
+    if len(recent_timestamps) < 3:
+        return 0.2 if repaid_usd > 0 else 0.05
+    recent_timestamps = sorted(recent_timestamps, reverse=True)
+    gaps = [recent_timestamps[i] - recent_timestamps[i + 1] for i in range(len(recent_timestamps) - 1)]
+    if not gaps:
+        return 0.1
+    avg_gap = sum(gaps) / len(gaps)
+    spread = max(gaps) - min(gaps)
+    if avg_gap <= 0:
+        return 0.1
+    stability = max(0.0, 1.0 - (spread / avg_gap))
+    repay_ratio = min(repaid_usd / max(borrowed_usd, 1.0), 1.0)
+    return max(0.0, min(1.0, stability * 0.5 + repay_ratio * 0.5))
+
+
+def extract_features_live(address: str, rpc_url: str | None = None) -> dict:
     """
-    Deterministic feature extraction for demo/hackathon.
-    Uses address hash as seed for reproducible results.
+    Live feature extraction from public Solana RPC.
 
-    In production, replace with:
-    - Helius/Shyft API for Solana transaction history
-    - The Graph subgraphs for DeFi protocol interactions
-    - On-chain PDA reads for lending protocol positions
-
-    AUDIT:
-    - Deterministic: same address always produces same features
-    - No RPC calls (offline, fast, no rate limit issues)
-    - Output validated through validate_features()
+    This is intentionally conservative:
+    - if we cannot observe positive lending/repayment evidence, we do not invent it
+    - missing protocol-specific credit history stays near zero instead of neutral
     """
     address = validate_address(address)
+    rpc_url = rpc_url or SOLANA_RPC_URL
+    cache_key = (rpc_url, address)
+    now_ts = time.time()
+    cached = _FEATURE_CACHE.get(cache_key)
+    if cached and now_ts - cached[0] < FEATURE_CACHE_TTL_SECS:
+        return cached[1]
 
-    # Deterministic seed from address hash
+    if address in SYSTEM_PROGRAMS:
+        features = validate_features({
+            "tx_count_90d": 0,
+            "tx_volume_90d_usd": 0.0,
+            "wallet_age_days": 3000,
+            "defi_protocols_used": 0,
+            "total_borrowed_usd": 0.0,
+            "total_repaid_usd": 0.0,
+            "liquidation_count": 0,
+            "token_diversity": 0,
+            "avg_balance_30d_usd": 0.0,
+            "payment_regularity": 0.0,
+            "governance_votes": 0,
+            "nft_attestations": 0,
+            "cross_chain_activity": 0,
+            "counterparty_reputation": 0.05,
+        })
+        _FEATURE_CACHE[cache_key] = (now_ts, features)
+        return features
+
+    now = int(time.time())
+    cutoff_90d = now - 90 * 24 * 60 * 60
+
+    sigs = _rpc("getSignaturesForAddress", [address, {"limit": LIVE_SIGNATURE_LIMIT}], rpc_url) or []
+    recent_sigs = [entry for entry in sigs if (entry.get("blockTime") or 0) >= cutoff_90d]
+    tx_count_90d = len(recent_sigs)
+
+    oldest_block_time = min((entry.get("blockTime") or now) for entry in sigs) if sigs else now
+    wallet_age_days = max(0, int((now - oldest_block_time) // 86400))
+
+    signature_sample = [entry["signature"] for entry in recent_sigs[:LIVE_TX_SAMPLE_LIMIT] if entry.get("signature")]
+    program_ids = set()
+    balance_deltas_usd = []
+    recent_timestamps = []
+
+    for signature in signature_sample:
+        try:
+            tx = _rpc(
+                "getTransaction",
+                [signature, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}],
+                rpc_url,
+            )
+        except Exception:
+            continue
+        if not tx:
+            continue
+        block_time = tx.get("blockTime") or now
+        recent_timestamps.append(block_time)
+        meta = tx.get("meta") or {}
+        message = ((tx.get("transaction") or {}).get("message")) or {}
+        account_keys = message.get("accountKeys") or []
+
+        for instruction in message.get("instructions") or []:
+            program_id = instruction.get("programId")
+            if program_id:
+                program_ids.add(program_id)
+        for group in meta.get("innerInstructions") or []:
+            for instruction in group.get("instructions") or []:
+                program_id = instruction.get("programId")
+                if program_id:
+                    program_ids.add(program_id)
+
+        owner_index = None
+        for idx, entry in enumerate(account_keys):
+            if _extract_pubkey(entry) == address:
+                owner_index = idx
+                break
+        if owner_index is not None:
+            try:
+                pre_balances = meta.get("preBalances") or []
+                post_balances = meta.get("postBalances") or []
+                lamport_delta = abs((post_balances[owner_index] - pre_balances[owner_index]) / 1e9)
+                balance_deltas_usd.append(lamport_delta * SOL_USD_FALLBACK)
+            except Exception:
+                pass
+
+    current_balance = _rpc("getBalance", [address, {"commitment": "confirmed"}], rpc_url)
+    current_balance_usd = ((current_balance or {}).get("value", 0) / 1e9) * SOL_USD_FALLBACK
+
+    token_accounts = {"value": []}
+    if tx_count_90d > 0 or current_balance_usd > 1.0:
+        token_accounts = _rpc(
+            "getTokenAccountsByOwner",
+            [address, {"programId": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"}, {"encoding": "jsonParsed"}],
+            rpc_url,
+        ) or {"value": []}
+
+    token_mints = set()
+    nft_like = 0
+    for entry in token_accounts.get("value", []):
+        parsed = (((entry.get("account") or {}).get("data") or {}).get("parsed") or {}).get("info") or {}
+        mint = parsed.get("mint")
+        token_amount = (parsed.get("tokenAmount") or {})
+        ui_amount = token_amount.get("uiAmount") or 0
+        decimals = token_amount.get("decimals", 0)
+        if mint and ui_amount and ui_amount > 0:
+            token_mints.add(mint)
+            if decimals == 0 and ui_amount <= 1:
+                nft_like += 1
+
+    observable_programs = {pid for pid in program_ids if pid not in SYSTEM_PROGRAMS}
+    defi_protocols_used = min(len(observable_programs), FEATURE_SCHEMA["defi_protocols_used"]["max"])
+    governance_votes = _program_matches(observable_programs, GOVERNANCE_HINTS)
+    cross_chain_activity = max(0, min(5, _program_matches(observable_programs, BRIDGE_HINTS)))
+    liquidation_count = max(0, min(5, _program_matches(observable_programs, LIQUIDATION_HINTS) // 2))
+    tx_volume_90d_usd = float(sum(balance_deltas_usd))
+
+    # Conservative lending activity heuristics:
+    # no clear DeFi interaction => near-zero credit history
+    lending_signal = min(defi_protocols_used / 6, 1.0)
+    borrowed_estimate = tx_volume_90d_usd * (0.10 + lending_signal * 0.35)
+    if defi_protocols_used == 0:
+        borrowed_estimate = 0.0
+    repaid_estimate = borrowed_estimate * max(0.0, min(1.0, 0.20 + lending_signal * 0.45 - liquidation_count * 0.10))
+    payment_regularity = _regularity_score(recent_timestamps, borrowed_estimate, repaid_estimate)
+    counterparty_reputation = _counterparty_score(
+        tx_count_90d=tx_count_90d,
+        protocol_count=defi_protocols_used,
+        token_diversity=len(token_mints),
+        age_days=wallet_age_days,
+    )
+
+    avg_balance_30d_usd = current_balance_usd * 0.7 + min(tx_volume_90d_usd / 30.0, current_balance_usd * 0.5 + 250.0)
+
+    raw = {
+        "tx_count_90d": tx_count_90d,
+        "tx_volume_90d_usd": tx_volume_90d_usd,
+        "wallet_age_days": wallet_age_days,
+        "defi_protocols_used": defi_protocols_used,
+        "total_borrowed_usd": borrowed_estimate,
+        "total_repaid_usd": repaid_estimate,
+        "liquidation_count": liquidation_count,
+        "token_diversity": len(token_mints),
+        "avg_balance_30d_usd": avg_balance_30d_usd,
+        "payment_regularity": payment_regularity,
+        "governance_votes": governance_votes,
+        "nft_attestations": nft_like,
+        "cross_chain_activity": cross_chain_activity,
+        "counterparty_reputation": counterparty_reputation,
+    }
+
+    features = validate_features(raw)
+    _FEATURE_CACHE[cache_key] = (now_ts, features)
+    return features
+
+
+def extract_features_demo(address: str) -> dict:
+    address = validate_address(address)
     addr_hash = int(hashlib.sha256(address.lower().encode("utf-8")).hexdigest(), 16)
     rng = np.random.RandomState(addr_hash % (2**31))
 
-    # Generate realistic feature distributions
     wallet_age = int(rng.randint(1, 1500))
-    total_borrowed = round(float(rng.lognormal(8, 2)), 2)  # Log-normal: most small, some large
-    repay_ratio = float(rng.beta(8, 2))  # Skewed toward high repayment
-    total_repaid = round(min(total_borrowed * repay_ratio * 1.05, total_borrowed * 1.1), 2)
+    tx_count = int(rng.randint(0, 180))
+    protocol_count = int(rng.randint(0, 6))
+    total_borrowed = round(float(rng.lognormal(6.6, 1.9)) if protocol_count > 0 else 0.0, 2)
+    repay_ratio = float(rng.beta(4, 4)) if total_borrowed > 0 else 0.0
+    total_repaid = round(total_borrowed * repay_ratio, 2)
 
     raw = {
-        "tx_count_90d":            int(rng.randint(5, 500)),
-        "tx_volume_90d_usd":       round(float(rng.lognormal(7, 2)), 2),
-        "wallet_age_days":         wallet_age,
-        "defi_protocols_used":     int(rng.randint(0, 15)),
-        "total_borrowed_usd":      total_borrowed,
-        "total_repaid_usd":        total_repaid,
-        "liquidation_count":       int(rng.choice([0, 0, 0, 0, 0, 1, 1, 2], p=[0.5, 0.15, 0.1, 0.08, 0.05, 0.05, 0.04, 0.03])),
-        "token_diversity":         int(rng.randint(1, 25)),
-        "avg_balance_30d_usd":     round(float(rng.lognormal(7, 2)), 2),
-        "payment_regularity":      round(float(rng.beta(6, 2)), 4),
-        "governance_votes":        int(rng.randint(0, 15)),
-        "nft_attestations":        int(rng.randint(0, 6)),
-        "cross_chain_activity":    int(rng.randint(1, 7)),
-        "counterparty_reputation": round(float(rng.beta(5, 2)), 4),
+        "tx_count_90d": tx_count,
+        "tx_volume_90d_usd": round(float(rng.lognormal(6.2, 1.8)), 2),
+        "wallet_age_days": wallet_age,
+        "defi_protocols_used": protocol_count,
+        "total_borrowed_usd": total_borrowed,
+        "total_repaid_usd": total_repaid,
+        "liquidation_count": int(rng.choice([0, 0, 0, 1, 2, 3], p=[0.45, 0.20, 0.15, 0.10, 0.06, 0.04])),
+        "token_diversity": int(rng.randint(0, 12)),
+        "avg_balance_30d_usd": round(float(rng.lognormal(5.7, 1.7)), 2),
+        "payment_regularity": round(float(rng.beta(3, 5)) if total_borrowed > 0 else 0.0, 4),
+        "governance_votes": int(rng.randint(0, 4)),
+        "nft_attestations": int(rng.randint(0, 3)),
+        "cross_chain_activity": int(rng.randint(0, 3)),
+        "counterparty_reputation": round(float(rng.beta(3, 4)), 4),
     }
 
     return validate_features(raw)
 
 
-def features_to_vector(features: dict) -> np.ndarray:
+def extract_features(address: str, mode: str = "auto", rpc_url: str | None = None) -> tuple[dict, str]:
     """
-    Convert feature dict to numpy array in canonical order.
-    Used as input to XGBoost model.
+    Extract features using live RPC when possible and fall back safely.
+    Returns (features, extraction_mode_used).
+    """
+    normalized_mode = (mode or "auto").lower()
+    if normalized_mode == "demo":
+        return extract_features_demo(address), "demo"
+    if normalized_mode == "live":
+        return extract_features_live(address, rpc_url=rpc_url), "live"
+    try:
+        return extract_features_live(address, rpc_url=rpc_url), "live"
+    except Exception:
+        return extract_features_demo(address), "demo"
 
-    AUDIT: Order matches FEATURE_NAMES constant exactly.
-    """
+
+def features_to_vector(features: dict) -> np.ndarray:
     validated = validate_features(features)
     return np.array([validated[name] for name in FEATURE_NAMES], dtype=np.float64)

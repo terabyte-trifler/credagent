@@ -70,7 +70,11 @@ def _payment_history(f: dict) -> float:
     regularity = f.get("payment_regularity", 0)
 
     if borrowed <= 0:
-        return 0.5  # No history — neutral
+        # Thin-file wallets should not score as if they had established repayment history.
+        activity = min(f.get("tx_count_90d", 0) / 150, 1.0)
+        age = min(f.get("wallet_age_days", 0) / 365, 1.0)
+        protocol_presence = min(f.get("defi_protocols_used", 0) / 4, 1.0)
+        return min(0.35, activity * 0.15 + age * 0.10 + protocol_presence * 0.10)
 
     repay_ratio = min(repaid / max(borrowed, 1), 1.0)
     liq_penalty = max(0.0, 1.0 - liqs * 0.2)  # -20% per liquidation
@@ -90,7 +94,7 @@ def _credit_utilization(f: dict) -> float:
     repaid     = f.get("total_repaid_usd", 0)
 
     if balance <= 0:
-        return 0.3
+        return 0.1
 
     outstanding = max(0, borrowed - repaid)
     utilization = outstanding / max(balance, 1)

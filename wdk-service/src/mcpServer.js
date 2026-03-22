@@ -340,6 +340,23 @@ export function createHttpServer(services, config = {}) {
           });
         }
 
+        const toolTierMap = safety.getToolTierMap();
+        const requiredTier = toolTierMap[body.tool];
+        if (
+          authEnabled &&
+          requiredTier !== undefined &&
+          Number.isFinite(authResult.tier) &&
+          authResult.tier < requiredTier
+        ) {
+          return json(res, 403, {
+            success: false,
+            error: `CLIENT_TIER: Key "${authResult.clientId}" has tier ${authResult.tier}, tool "${body.tool}" requires tier ${requiredTier}`,
+            blocked: true,
+            clientTier: authResult.tier,
+            requiredTier,
+          });
+        }
+
         const result = await safety.executeTool(body.tool, body.params || {});
         if (isBuildOnlyResult(result)) {
           return json(res, 409, {
