@@ -22,6 +22,10 @@ import { MCPBridge } from './mcpBridge.js';
 import { SafetyMiddleware } from './safetyMiddleware.js';
 import { AuditLog } from './auditLog.js';
 import { createAuthFromEnv } from './auth.js';
+import { CreditAssessmentAgent } from '../../agent/src/creditAgent.js';
+import { LendingDecisionAgent } from '../../agent/src/lendingAgent.js';
+import { CollectionTrackerAgent } from '../../agent/src/collectionAgent.js';
+import { YieldOptimizerAgent } from '../../agent/src/yieldAgent.js';
 import 'dotenv/config';
 
 const DEFAULT_HOST = process.env.MCP_HOST || '127.0.0.1';
@@ -45,6 +49,13 @@ const DEFAULT_AGENT_LIMITS = {
   'lending-agent': '10000000000',
   'collection-agent': '1000000000',
   'yield-agent': '5000000000',
+};
+
+const DEFAULT_AGENT_META = {
+  'credit-agent': { name: 'Credit Agent', role: 'Oracle', icon: 'brain', color: '#a78bfa' },
+  'lending-agent': { name: 'Lending Agent', role: 'Lending', icon: 'banknote', color: '#14c972' },
+  'collection-agent': { name: 'Collection Agent', role: 'Collection', icon: 'clock', color: '#f59e0b' },
+  'yield-agent': { name: 'Yield Agent', role: 'Yield', icon: 'trending-up', color: '#3b82f6' },
 };
 
 function isLocalHost(host) {
@@ -199,6 +210,150 @@ function isBuildOnlyResult(result) {
   );
 }
 
+function getCollectionAgentAddress(walletService) {
+  try {
+    return walletService.getAddress('collection-agent');
+  } catch {
+    return '';
+  }
+}
+
+function summarizeDecisionEntry(entry) {
+  return {
+    action: entry.action || entry.event || entry.tool || 'Activity',
+    agent: entry.agent || entry.agentId || entry.agent_id || entry.clientId || 'system',
+    status: entry.status === 'EXECUTION_FAILED' || entry.success === false || entry.blocked
+      ? 'error'
+      : entry.status === 'PUSH_FAILED'
+        ? 'error'
+        : 'success',
+    timestamp: entry.ts || entry.isoTime || entry.timestamp || new Date().toISOString(),
+    summary:
+      entry.detail ||
+      entry.summary ||
+      entry.error ||
+      entry.reason ||
+      entry.status ||
+      'No summary available',
+    txHash: entry.txHash || entry.tx_hash || null,
+    decisionHash: entry.decisionHash || entry.decision_hash || entry.reasoningHash || null,
+  };
+}
+
+function buildDecisionFeed(services, count) {
+  const limit = Math.max(1, Math.min(count, 200));
+  const entries = [
+    ...(services.creditAgent?.getAuditLog?.(limit) || []),
+    ...(services.lendingAgent?.getDecisionLog?.(limit) || []),
+    ...(services.collectionAgent?.getAuditLog?.(limit) || []),
+    ...(services.yieldAgent?.getAuditLog?.(limit) || []),
+    ...combineAuditEntries(services, limit),
+  ];
+
+  return entries
+    .map(summarizeDecisionEntry)
+    .sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)))
+    .slice(0, limit);
+}
+
+async function buildAgentRuntimeSnapshot(services) {
+  const combinedAudit = combineAuditEntries(services, 500);
+  const now = Date.now();
+  const oneDayAgo = now - 86_400_000;
+
+  return Promise.all(Object.entries(DEFAULT_AGENT_META).map(async ([agentId, meta]) => {
+    try {
+      const balance = await services.walletService.getSolBalance(agentId);
+      const auditEntries = combinedAudit.filter((entry) => {
+        const entryAgent = entry.agent || entry.agentId || entry.agent_id;
+        if (entryAgent !== agentId) return false;
+        const ts = Date.parse(entry.ts || entry.isoTime || entry.timestamp || '');
+        return Number.isFinite(ts) ? ts >= oneDayAgo : true;
+      });
+      const latestEntry = auditEntries[0] || null;
+      const limit = services.safety?.getAgentLimitSnapshot?.(agentId);
+
+      return {
+        id: agentId,
+        ...meta,
+        tier: services.safety?.getAgentTier?.(agentId) ?? DEFAULT_AGENT_TIERS[agentId] ?? 0,
+        status: 'active',
+        balance: (Number(balance.lamports || 0) / 1_000_000_000).toFixed(2),
+        opsToday: auditEntries.length,
+        limitUsedPct: limit?.usedPct ?? 0,
+        lastAction:
+          latestEntry?.summary ||
+          latestEntry?.error ||
+          latestEntry?.reason ||
+          latestEntry?.status ||
+          'Connected to MCP runtime',
+        walletAddress: services.walletService.getAddress(agentId),
+      };
+    } catch (error) {
+      const message = error?.message || 'Wallet not initialized in MCP yet';
+      return {
+        id: agentId,
+        ...meta,
+        tier: services.safety?.getAgentTier?.(agentId) ?? DEFAULT_AGENT_TIERS[agentId] ?? 0,
+        status: /not found|wallet/i.test(message) ? 'uninitialized' : 'error',
+        balance: '--',
+        opsToday: 0,
+        limitUsedPct: 0,
+        lastAction: message,
+        walletAddress: null,
+      };
+    }
+  }));
+}
+
+function parseLoanRequest(body = {}) {
+  const amountUsd = Number(body.amountUsd ?? body.amount ?? 0);
+  const durationDays = Number(body.durationDays ?? body.duration ?? 0);
+  if (!body.borrower || typeof body.borrower !== 'string') {
+    throw new Error('Missing "borrower" field');
+  }
+  if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
+    throw new Error('Missing or invalid "amountUsd" field');
+  }
+  const safeDuration = Number.isFinite(durationDays) && durationDays > 0 ? durationDays : 30;
+  return {
+    borrower: body.borrower,
+    amountUsd,
+    durationDays: safeDuration,
+  };
+}
+
+function formatDemoSteps(scoreResult, evaluation, execution) {
+  const steps = [];
+  if (scoreResult) {
+    steps.push(`Score status: ${scoreResult.status} · ${scoreResult.score} (${scoreResult.tier})`);
+  }
+  if (evaluation) {
+    if (String(evaluation.status || '').startsWith('DENIED')) {
+      steps.push(`Evaluation denied: ${evaluation.error || evaluation.status}`);
+    } else {
+      steps.push(
+        `Evaluation ready: $${evaluation.offer?.principal ?? 0} @ ${((evaluation.offer?.rateBps ?? 0) / 100).toFixed(1)}% for ${evaluation.offer?.durationDays ?? 0}d`,
+      );
+    }
+  }
+  if (execution) {
+    steps.push(`Execution status: ${execution.status}`);
+    if (execution.steps?.lockCollateral?.result?.txHash) {
+      steps.push(`Collateral locked on-chain: ${execution.steps.lockCollateral.result.txHash}`);
+    } else if (execution.steps?.lockCollateral?.result?.status === 'instruction_built') {
+      steps.push('Collateral step built only: borrower signer not available to MCP runtime');
+    }
+    if (execution.steps?.disburse?.result?.txHash) {
+      steps.push(`Disbursement submitted: ${execution.steps.disburse.result.txHash}`);
+    }
+    if (execution.steps?.createSchedule?.result?.txHash) {
+      steps.push(`Installment schedule submitted: ${execution.steps.createSchedule.result.txHash}`);
+    }
+  }
+  return steps;
+}
+
 export async function createServices(config = {}) {
   const audit = config.audit || new AuditLog();
   const rpcUrl = config.rpcUrl || process.env.WDK_SOLANA_RPC_URL || 'https://api.devnet.solana.com';
@@ -221,12 +376,38 @@ export async function createServices(config = {}) {
   }
 
   const auth = config.auth !== undefined ? config.auth : createAuthFromEnv(audit);
+  const creditAgent = config.creditAgent || new CreditAssessmentAgent(mcpBridge);
+  const collectionAgent = config.collectionAgent || new CollectionTrackerAgent(mcpBridge);
+  const lendingAgent = config.lendingAgent || new LendingDecisionAgent(
+    mcpBridge,
+    creditAgent,
+    getCollectionAgentAddress(walletService),
+  );
+  const yieldAgent = config.yieldAgent || new YieldOptimizerAgent(mcpBridge);
 
-  return { walletService, tokenOps, bridgeService, mcpBridge, safety, audit, auth };
+  return {
+    walletService,
+    tokenOps,
+    bridgeService,
+    mcpBridge,
+    safety,
+    audit,
+    auth,
+    creditAgent,
+    collectionAgent,
+    lendingAgent,
+    yieldAgent,
+  };
 }
 
 export function createHttpServer(services, config = {}) {
-  const { safety, mcpBridge, auth } = services;
+  const {
+    safety,
+    mcpBridge,
+    auth,
+    creditAgent,
+    lendingAgent,
+  } = services;
   const sse = new SSEManager();
   const startedAt = Date.now();
   const host = config.host || DEFAULT_HOST;
@@ -395,6 +576,99 @@ export function createHttpServer(services, config = {}) {
         circuitBreaker: safety.isCircuitBreakerActive,
         clientId: authResult.clientId,
       });
+    }
+
+    if (pathname === '/runtime/agents' && req.method === 'GET') {
+      const authResult = requireAuth(req, res);
+      if (!authResult) return;
+      const agents = await buildAgentRuntimeSnapshot(services);
+      return json(res, 200, { agents });
+    }
+
+    if (pathname === '/runtime/decisions' && req.method === 'GET') {
+      const authResult = requireAuth(req, res);
+      if (!authResult) return;
+      const count = Number.parseInt(url.searchParams.get('count') || '50', 10);
+      return json(res, 200, { decisions: buildDecisionFeed(services, count) });
+    }
+
+    if (pathname === '/agent/lending/evaluate' && req.method === 'POST') {
+      const authResult = requireAuth(req, res);
+      if (!authResult) return;
+      try {
+        const body = await readBody(req);
+        const request = parseLoanRequest(body);
+        const result = await lendingAgent.evaluateLoan(
+          request.borrower,
+          request.amountUsd,
+          request.durationDays,
+        );
+        return json(res, 200, { success: true, result });
+      } catch (error) {
+        return json(res, 400, { success: false, error: error.message });
+      }
+    }
+
+    if (pathname === '/agent/lending/negotiate' && req.method === 'POST') {
+      const authResult = requireAuth(req, res);
+      if (!authResult) return;
+      try {
+        const body = await readBody(req);
+        if (!body?.borrower) throw new Error('Missing "borrower" field');
+        const counterOffer = {};
+        if (body.amountUsd !== undefined) counterOffer.principal = Number(body.amountUsd);
+        if (body.durationDays !== undefined) counterOffer.durationDays = Number(body.durationDays);
+        if (body.rateBps !== undefined) counterOffer.rateBps = Number(body.rateBps);
+        const result = await lendingAgent.negotiate(body.borrower, counterOffer);
+        return json(res, 200, { success: true, result });
+      } catch (error) {
+        return json(res, 400, { success: false, error: error.message });
+      }
+    }
+
+    if (pathname === '/agent/lending/execute' && req.method === 'POST') {
+      const authResult = requireAuth(req, res);
+      if (!authResult) return;
+      try {
+        const body = await readBody(req);
+        if (!body?.borrower) throw new Error('Missing "borrower" field');
+        const scoreResult = await creditAgent.scoreBorrower(body.borrower, {
+          forceFresh: Boolean(body.forceFresh),
+        });
+        const result = await lendingAgent.executeLoan(body.borrower);
+        return json(res, 200, { success: true, scoreResult, result });
+      } catch (error) {
+        return json(res, 400, { success: false, error: error.message });
+      }
+    }
+
+    if (pathname === '/demo/run' && req.method === 'POST') {
+      const authResult = requireAuth(req, res);
+      if (!authResult) return;
+      try {
+        const body = await readBody(req);
+        const request = parseLoanRequest(body);
+        const scoreResult = await creditAgent.scoreBorrower(request.borrower, {
+          forceFresh: Boolean(body.forceFresh),
+        });
+        const evaluation = await lendingAgent.evaluateLoan(
+          request.borrower,
+          request.amountUsd,
+          request.durationDays,
+        );
+        const execution = String(evaluation.status || '').startsWith('DENIED')
+          ? null
+          : await lendingAgent.executeLoan(request.borrower);
+        return json(res, 200, {
+          success: true,
+          scoreResult,
+          evaluation,
+          execution,
+          steps: formatDemoSteps(scoreResult, evaluation, execution),
+        });
+      } catch (error) {
+        return json(res, 400, { success: false, error: error.message });
+      }
     }
 
     if (pathname === '/audit' && req.method === 'GET') {

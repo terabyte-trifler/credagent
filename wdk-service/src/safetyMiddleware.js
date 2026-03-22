@@ -237,6 +237,21 @@ export class SafetyMiddleware {
     return { ...TOOL_TIER_MAP };
   }
 
+  getAgentLimitSnapshot(agentId) {
+    const limitState = this.#agentLimits.get(agentId);
+    if (!limitState) return null;
+    this.#resetLimitIfNeeded(limitState);
+    const usedPct = limitState.dailyLimit > 0n
+      ? Number((limitState.dailySpent * 100n) / limitState.dailyLimit)
+      : 0;
+    return {
+      dailyLimit: limitState.dailyLimit.toString(),
+      dailySpent: limitState.dailySpent.toString(),
+      usedPct,
+      resetTime: limitState.resetTime,
+    };
+  }
+
   static get TIERS() {
     return { ...TIERS };
   }

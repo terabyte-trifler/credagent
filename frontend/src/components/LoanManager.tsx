@@ -23,7 +23,17 @@ function ProgressBar({ paid, total }: { paid: number; total: number }) {
   );
 }
 
-export default function LoanManager({ loans, live = false }: { loans: Loan[]; live?: boolean }) {
+export default function LoanManager({
+  loans,
+  live = false,
+  onRepay,
+  repayingLoanId,
+}: {
+  loans: Loan[];
+  live?: boolean;
+  onRepay?: (loan: Loan) => void | Promise<void>;
+  repayingLoanId?: number | null;
+}) {
   const [expanded, setExpanded] = useState<number | null>(null);
   const hasSampleData = !live && loans.length > 0;
 
@@ -83,12 +93,23 @@ export default function LoanManager({ loans, live = false }: { loans: Loan[]; li
                   </div>
                   {loan.status === 'Active' && (
                     <div className="flex gap-2 mt-3">
-                      <button className="px-3 py-1.5 rounded-lg bg-cred-600/20 text-cred-400 text-xs font-medium hover:bg-cred-600/30 transition-colors">
-                        Repay
+                      <button
+                        onClick={() => onRepay?.(loan)}
+                        disabled={!onRepay || repayingLoanId === loan.id}
+                        className="px-3 py-1.5 rounded-lg bg-cred-600/20 text-cred-400 text-xs font-medium hover:bg-cred-600/30 transition-colors disabled:opacity-50"
+                      >
+                        {repayingLoanId === loan.id ? 'Repaying…' : 'Repay'}
                       </button>
-                      <button className="px-3 py-1.5 rounded-lg bg-surface-3 text-gray-400 text-xs font-medium hover:bg-surface-3/80 transition-colors flex items-center gap-1">
+                      <a
+                        href={loan.accountPubkey
+                          ? `https://explorer.solana.com/address/${loan.accountPubkey}?cluster=devnet`
+                          : undefined}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="px-3 py-1.5 rounded-lg bg-surface-3 text-gray-400 text-xs font-medium hover:bg-surface-3/80 transition-colors flex items-center gap-1"
+                      >
                         View on Explorer <ExternalLink size={10} />
-                      </button>
+                      </a>
                     </div>
                   )}
                 </div>

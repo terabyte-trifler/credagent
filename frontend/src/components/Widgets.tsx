@@ -145,7 +145,7 @@ export function DemoButton({
   currentStep: number;
   totalSteps: number;
 }) {
-  const pct = totalSteps > 0 ? (currentStep / (totalSteps - 1)) * 100 : 0;
+  const pct = totalSteps > 1 ? (currentStep / (totalSteps - 1)) * 100 : 0;
 
   return (
     <div className="relative overflow-hidden rounded-2xl">
@@ -160,14 +160,14 @@ export function DemoButton({
           <>
             <Loader2 size={18} className="animate-spin text-cred-400" />
             <span className="text-cred-300">
-              Step {currentStep + 1}/{totalSteps} — Running golden path…
+              Step {currentStep + 1}/{Math.max(totalSteps, 1)} — Running live backend flow…
             </span>
           </>
         ) : (
           <>
             <Play size={18} className="text-cred-400" />
-            <span>Run full demo</span>
-            <span className="text-cred-500/60 text-xs ml-1">Score → Escrow → Disburse → Repay → Release</span>
+            <span>Run live backend flow</span>
+            <span className="text-cred-500/60 text-xs ml-1">Score → Evaluate → Execute real MCP steps</span>
           </>
         )}
       </button>

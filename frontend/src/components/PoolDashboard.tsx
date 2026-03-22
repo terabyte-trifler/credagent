@@ -1,7 +1,5 @@
 import React from 'react';
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import type { PoolState } from '../lib/constants';
-import { MOCK_POOL_HISTORY } from '../lib/constants';
 
 const METRIC_COLORS: Record<string, string> = {
   'Total deposited': '#14c972',
@@ -22,22 +20,6 @@ function UtilBar({ pct }: { pct: number }) {
   );
 }
 
-function CustomTooltip({ active, payload, label }: any) {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="glass px-3 py-2 text-xs shadow-xl">
-      <div className="text-gray-500 mb-1">{label}</div>
-      {payload.map((p: any) => (
-        <div key={p.name} className="flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: p.color }} />
-          <span className="text-gray-400 capitalize">{p.name}:</span>
-          <span className="text-gray-200 font-semibold">${Math.round(p.value).toLocaleString()}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 export default function PoolDashboard({ pool }: { pool: PoolState }) {
   const metrics = [
     { label: 'Total deposited', value: `$${pool.totalDeposited.toLocaleString()}` },
@@ -52,9 +34,15 @@ export default function PoolDashboard({ pool }: { pool: PoolState }) {
     <div className="glass p-6">
       <h2 className="text-base font-semibold text-gray-100 mb-4">Pool analytics</h2>
 
-      {pool.source === 'demo' && (
+      {pool.source !== 'onchain' && (
         <div className="mb-4 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-[11px] text-amber-300">
-          Pool totals and chart history are still synthetic until live LendingPool reads or an indexed metrics API are connected.
+          Pool totals are still synthetic. Connect live LendingPool reads to replace these values.
+        </div>
+      )}
+
+      {pool.source === 'onchain' && (
+        <div className="mb-4 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-[11px] text-amber-300">
+          Headline metrics are live from PoolState PDAs. Historical charting is hidden until an indexed history feed is connected, so the dashboard does not invent pool history.
         </div>
       )}
 
@@ -83,28 +71,12 @@ export default function PoolDashboard({ pool }: { pool: PoolState }) {
         ))}
       </div>
 
-      {/* Area chart */}
-      <div className="text-xs text-gray-500 font-medium mb-2">Deposits vs borrows (30d)</div>
-      <ResponsiveContainer width="100%" height={180}>
-        <AreaChart data={MOCK_POOL_HISTORY} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
-          <defs>
-            <linearGradient id="gDeposited" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor="#14c972" stopOpacity={0.2} />
-              <stop offset="95%" stopColor="#14c972" stopOpacity={0} />
-            </linearGradient>
-            <linearGradient id="gBorrowed" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.2} />
-              <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
-            </linearGradient>
-          </defs>
-          <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#4b5563' }} axisLine={false} tickLine={false} />
-          <YAxis tick={{ fontSize: 10, fill: '#4b5563' }} axisLine={false} tickLine={false}
-            tickFormatter={(v: number) => `$${(v / 1000).toFixed(0)}K`} />
-          <Tooltip content={<CustomTooltip />} />
-          <Area type="monotone" dataKey="deposited" stroke="#14c972" fill="url(#gDeposited)" strokeWidth={2} />
-          <Area type="monotone" dataKey="borrowed" stroke="#3b82f6" fill="url(#gBorrowed)" strokeWidth={2} />
-        </AreaChart>
-      </ResponsiveContainer>
+      <div className="rounded-xl border border-dashed border-white/[0.08] bg-surface-2/20 p-4">
+        <div className="text-xs text-gray-400 font-medium mb-1">Historical pool chart</div>
+        <div className="text-sm text-gray-500">
+          Waiting for indexed event history. The dashboard now hides synthetic trendlines instead of rendering invented 30-day data.
+        </div>
+      </div>
     </div>
   );
 }

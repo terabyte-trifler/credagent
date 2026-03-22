@@ -17,7 +17,6 @@
 
 import React, { useEffect, useState, useCallback } from 'react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
-import { useWallet } from '@solana/wallet-adapter-react';
 import { AlertCircle, CheckCircle2, Clock3, ServerCog } from 'lucide-react';
 import AgentStatus from './components/AgentStatus';
 import CreditExplorer from './components/CreditExplorer';
@@ -30,13 +29,15 @@ import {
   useDecisionFeed,
   useDemoRunner,
   useIntegrationGaps,
+  useLoanActions,
   useLoanBook,
+  usePoolState,
   useRuntimeStatus,
 } from './hooks/useCredAgent';
 import {
-  MOCK_POOL,
   type CreditResult,
   type ChatMessage,
+  MCP_API_URL,
 } from './lib/constants';
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
@@ -49,12 +50,13 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
-  const { connected, publicKey } = useWallet();
   const demo = useDemoRunner();
   const { services } = useRuntimeStatus();
   const { agents } = useAgentStatus();
   const { decisions } = useDecisionFeed();
   const { loans, loaded: loanBookLoaded } = useLoanBook();
+  const { pool } = usePoolState();
+  const { repayLoan, repayingLoanId } = useLoanActions();
   const { gaps } = useIntegrationGaps(services, agents, decisions, loanBookLoaded);
   const [latestCreditResult, setLatestCreditResult] = useState<CreditResult | null>(null);
   const [negotiationTerms, setNegotiationTerms] = useState<{
@@ -64,6 +66,7 @@ export default function App() {
     collateral: string;
     round: number;
   } | null>(null);
+  const [negotiationStarted, setNegotiationStarted] = useState(false);
 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     { role: 'agent', text: "I'm the CredAgent Lending Agent. Score a wallet in Credit Explorer first, then tell me the loan amount and duration you want, like '3000 for 60 days'." },
@@ -90,31 +93,10 @@ export default function App() {
     };
   }, []);
 
-  const clampOffer = useCallback((amountUsd: number, durationDays: number, credit: CreditResult, round: number) => {
-    const maxLoan = credit.recommended_terms.max_loan_usd;
-    const maxDuration = credit.recommended_terms.max_duration_days || 30;
-    const baseRate = credit.recommended_terms.rate_bps;
-    const cappedAmount = Math.min(amountUsd, maxLoan);
-    const cappedDuration = Math.min(durationDays, maxDuration);
-    const maxDiscount = Math.min(100 * round, 300);
-    const negotiatedRate = Math.max(baseRate - maxDiscount, 200);
-
-    return {
-      amountUsd: cappedAmount,
-      durationDays: cappedDuration,
-      rateBps: negotiatedRate,
-      collateral: buildCollateralText(cappedAmount, credit.recommended_terms.max_ltv_bps),
-      round,
-      changedAmount: cappedAmount !== amountUsd,
-      changedDuration: cappedDuration !== durationDays,
-      changedRate: negotiatedRate !== baseRate,
-    };
-  }, [buildCollateralText]);
-
   const handleChatSend = useCallback((text: string) => {
     setChatMessages(prev => [...prev, { role: 'user', text }]);
 
-    window.setTimeout(() => {
+    window.setTimeout(async () => {
       if (!latestCreditResult) {
         setChatMessages(prev => [...prev, {
           role: 'agent',
@@ -141,36 +123,68 @@ export default function App() {
       }
 
       const requestedDuration = parsed.durationDays || negotiationTerms?.durationDays || Math.min(latestCreditResult.recommended_terms.max_duration_days || 30, 60);
-      const nextRound = Math.min((negotiationTerms?.round || 0) + 1, 3);
-      const offer = clampOffer(parsed.amountUsd, requestedDuration, latestCreditResult, nextRound);
-      setNegotiationTerms(offer);
 
-      const notes = [
-        `Borrower tier ${latestCreditResult.risk_tier} (${latestCreditResult.score})`,
-        `Offer: $${offer.amountUsd.toLocaleString()} at ${(offer.rateBps / 100).toFixed(1)}% APR for ${offer.durationDays} days`,
-        `Collateral needed: ${offer.collateral}`,
-      ];
-      if (offer.changedAmount) {
-        notes.push(`Requested amount exceeded score-based max of $${latestCreditResult.recommended_terms.max_loan_usd.toLocaleString()}, so I capped it.`);
-      }
-      if (offer.changedDuration) {
-        notes.push(`Requested duration exceeded max allowed term of ${latestCreditResult.recommended_terms.max_duration_days} days, so I shortened it.`);
-      }
-      if (offer.changedRate) {
-        notes.push(`Round ${offer.round} concession applied: ${((offer.round) * 1).toFixed(0)}.0% discount capped by negotiation policy.`);
-      }
-      if (offer.round >= 3) {
-        notes.push('This is the final negotiation round under the current policy.');
-      } else {
-        notes.push('If you want to counter, send a new amount or duration and I will evaluate one more round.');
-      }
+      try {
+        const endpoint = negotiationStarted ? '/agent/lending/negotiate' : '/agent/lending/evaluate';
+        const resp = await fetch(`${MCP_API_URL}${endpoint}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            borrower: latestCreditResult.address,
+            amountUsd: parsed.amountUsd,
+            durationDays: requestedDuration,
+          }),
+        });
+        const payload = await resp.json();
+        if (!resp.ok || payload.success === false) {
+          throw new Error(payload.error || `HTTP ${resp.status}`);
+        }
 
-      setChatMessages(prev => [...prev, {
-        role: 'agent',
-        text: notes.join('. ') + '.',
-      }]);
-    }, 450);
-  }, [clampOffer, latestCreditResult, negotiationTerms?.durationDays, negotiationTerms?.round, parseNegotiationRequest]);
+        const result = payload.result;
+        const offer = result.offer;
+        if (!offer) {
+          setChatMessages(prev => [...prev, {
+            role: 'agent',
+            text: result.error || result.message || 'No live offer could be produced for this request.',
+          }]);
+          return;
+        }
+
+        setNegotiationStarted(true);
+        setNegotiationTerms({
+          amountUsd: offer.principal,
+          durationDays: offer.durationDays,
+          rateBps: offer.rateBps,
+          collateral: buildCollateralText(offer.principal, offer.ltvBps),
+          round: result.round || 1,
+        });
+
+        const notes = [
+          `Live lending agent response for ${latestCreditResult.risk_tier}-tier borrower (${latestCreditResult.score})`,
+          `Offer: $${offer.principal.toLocaleString()} at ${(offer.rateBps / 100).toFixed(1)}% APR for ${offer.durationDays} days`,
+          `Collateral needed: ${buildCollateralText(offer.principal, offer.ltvBps)}`,
+        ];
+        if (result.violations?.length) {
+          notes.push(`Policy adjustments: ${result.violations.join('; ')}`);
+        }
+        if (result.defaultProbability !== undefined) {
+          notes.push(`Estimated PD ${(Number(result.defaultProbability) * 100).toFixed(2)}%`);
+        }
+        notes.push(
+          result.status === 'FINAL'
+            ? 'This is the final negotiation round.'
+            : 'Send another counter-offer to continue the live session.',
+        );
+
+        setChatMessages(prev => [...prev, { role: 'agent', text: notes.join('. ') + '.' }]);
+      } catch (error: any) {
+        setChatMessages(prev => [...prev, {
+          role: 'agent',
+          text: `Live negotiation failed: ${error?.message || 'unknown error'}.`,
+        }]);
+      }
+    }, 300);
+  }, [buildCollateralText, latestCreditResult, negotiationStarted, negotiationTerms?.durationDays, parseNegotiationRequest]);
 
   useEffect(() => {
     if (!latestCreditResult) return;
@@ -181,12 +195,23 @@ export default function App() {
       },
     ]);
     setNegotiationTerms(null);
+    setNegotiationStarted(false);
   }, [latestCreditResult]);
 
-  // Feed demo log into chat
   const runDemo = useCallback(async () => {
-    await demo.run();
-  }, [demo]);
+    if (!latestCreditResult) {
+      setChatMessages(prev => [...prev, {
+        role: 'agent',
+        text: 'Score a wallet first so the live backend flow knows which borrower to evaluate.',
+      }]);
+      return;
+    }
+    await demo.run({
+      borrower: latestCreditResult.address,
+      amountUsd: Math.max(250, Math.min(latestCreditResult.recommended_terms.max_loan_usd || 500, 1000)),
+      durationDays: Math.min(latestCreditResult.recommended_terms.max_duration_days || 30, 30),
+    });
+  }, [demo, latestCreditResult]);
 
   // Combine demo log with chat
   const allMessages: ChatMessage[] = [
@@ -315,7 +340,12 @@ export default function App() {
           <section>
           <SectionLabel>Active loans</SectionLabel>
             <ErrorBoundary>
-              <LoanManager loans={loans} live />
+              <LoanManager
+                loans={loans}
+                live
+                onRepay={repayLoan}
+                repayingLoanId={repayingLoanId}
+              />
             </ErrorBoundary>
           </section>
           <section>
@@ -342,7 +372,16 @@ export default function App() {
         <section>
           <SectionLabel>Pool analytics</SectionLabel>
           <ErrorBoundary>
-            <PoolDashboard pool={MOCK_POOL} />
+            <PoolDashboard pool={pool || {
+              totalDeposited: 0,
+              totalBorrowed: 0,
+              utilization: 0,
+              interestEarned: 0,
+              activeLoans: 0,
+              defaultRate: 0,
+              baseRateBps: 0,
+              source: 'onchain',
+            }} />
           </ErrorBoundary>
         </section>
 

@@ -15,6 +15,7 @@ export interface AgentInfo {
   status: 'active' | 'idle' | 'paused' | 'error' | 'uninitialized';
   balance: string; opsToday: number; limitUsedPct: number;
   lastAction: string; color: string; icon: string;
+  walletAddress?: string | null;
 }
 
 export interface CreditResult {
@@ -44,6 +45,11 @@ export interface Loan {
   dueDate: string; repaid: number; status: 'Active' | 'Repaid' | 'Defaulted';
   escrowStatus: 'Locked' | 'Released' | 'Liquidated';
   paidInstallments: number; totalInstallments: number; installmentAmount: number;
+  accountPubkey?: string;
+  poolPubkey?: string;
+  escrowPubkey?: string;
+  collateralMint?: string;
+  outstandingEstimate?: number;
 }
 
 export interface PoolState {

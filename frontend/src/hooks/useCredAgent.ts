@@ -4,7 +4,7 @@
 
 import { useState, useCallback, useEffect } from 'react';
 import { useConnection, useWallet } from '@solana/wallet-adapter-react';
-import { PublicKey } from '@solana/web3.js';
+import { PublicKey, Transaction, TransactionInstruction } from '@solana/web3.js';
 import {
   MCP_API_URL,
   ML_API_URL,
@@ -56,21 +56,122 @@ export function usePoolState() {
   const [pool, setPool] = useState<PoolState | null>(null);
 
   const refresh = useCallback(async () => {
-    // TODO: replace with PoolState PDA deserialization once the client SDK exists.
-    // Until then, expose demo data explicitly so the UI cannot be mistaken for
-    // a live protocol monitor.
-    setPool({
-      totalDeposited: 50000, totalBorrowed: 12000, utilization: 24,
-      interestEarned: 340, activeLoans: 3, defaultRate: 1.2, baseRateBps: 650,
-      source: 'demo',
-    });
+    try {
+      const poolDiscriminator = Uint8Array.from([247, 237, 227, 245, 215, 195, 222, 70]);
+      const accounts = await connection.getProgramAccounts(PROGRAM_IDS.lendingPool, {
+        commitment: 'confirmed',
+      });
+
+      const pools = accounts
+        .map((account) => {
+          const bytes = Uint8Array.from(account.account.data as Uint8Array);
+          if (!matchesDiscriminator(bytes, poolDiscriminator)) return null;
+          const body = bytes.slice(8);
+          const totalDeposited = readU64(body, 64);
+          const totalBorrowed = readU64(body, 72);
+          const totalInterestEarned = readU64(body, 80);
+          const totalDefaults = readU64(body, 88);
+          const activeLoans = new DataView(body.buffer, body.byteOffset + 96, 4).getUint32(0, true);
+          const totalLoansIssued = new DataView(body.buffer, body.byteOffset + 100, 4).getUint32(0, true);
+          const baseRateBps = readU16(body, 112);
+          const utilization = totalDeposited > 0
+            ? Math.round((totalBorrowed / totalDeposited) * 100)
+            : 0;
+          const defaultRate = totalLoansIssued > 0
+            ? Number(((totalDefaults / totalLoansIssued) * 100).toFixed(2))
+            : 0;
+
+          return {
+            totalDeposited,
+            totalBorrowed,
+            interestEarned: totalInterestEarned,
+            activeLoans,
+            defaultRate,
+            utilization,
+            baseRateBps,
+          };
+        })
+        .filter(Boolean) as Array<{
+          totalDeposited: number;
+          totalBorrowed: number;
+          interestEarned: number;
+          activeLoans: number;
+          defaultRate: number;
+          utilization: number;
+          baseRateBps: number;
+        }>;
+
+      if (pools.length === 0) {
+        setPool({
+          totalDeposited: 0,
+          totalBorrowed: 0,
+          utilization: 0,
+          interestEarned: 0,
+          activeLoans: 0,
+          defaultRate: 0,
+          baseRateBps: 0,
+          source: 'onchain',
+        });
+        return;
+      }
+
+      const aggregated = pools.reduce((acc, poolState) => ({
+        totalDeposited: acc.totalDeposited + poolState.totalDeposited,
+        totalBorrowed: acc.totalBorrowed + poolState.totalBorrowed,
+        interestEarned: acc.interestEarned + poolState.interestEarned,
+        activeLoans: acc.activeLoans + poolState.activeLoans,
+        defaultRate: acc.defaultRate + poolState.defaultRate,
+        baseRateBps: Math.max(acc.baseRateBps, poolState.baseRateBps),
+      }), {
+        totalDeposited: 0,
+        totalBorrowed: 0,
+        interestEarned: 0,
+        activeLoans: 0,
+        defaultRate: 0,
+        baseRateBps: 0,
+      });
+
+      setPool({
+        totalDeposited: aggregated.totalDeposited,
+        totalBorrowed: aggregated.totalBorrowed,
+        utilization: aggregated.totalDeposited > 0
+          ? Math.round((aggregated.totalBorrowed / aggregated.totalDeposited) * 100)
+          : 0,
+        interestEarned: aggregated.interestEarned,
+        activeLoans: aggregated.activeLoans,
+        defaultRate: Number((aggregated.defaultRate / pools.length).toFixed(2)),
+        baseRateBps: aggregated.baseRateBps,
+        source: 'onchain',
+      });
+    } catch {
+      setPool({
+        totalDeposited: 0,
+        totalBorrowed: 0,
+        utilization: 0,
+        interestEarned: 0,
+        activeLoans: 0,
+        defaultRate: 0,
+        baseRateBps: 0,
+        source: 'onchain',
+      });
+    }
   }, [connection]);
+
+  useEffect(() => {
+    refresh();
+    const timer = window.setInterval(refresh, 20000);
+    return () => window.clearInterval(timer);
+  }, [refresh]);
 
   return { pool, refresh };
 }
 
 const LOAN_DISCRIMINATOR = Uint8Array.from([20, 195, 70, 117, 165, 227, 182, 1]);
 const SCHEDULE_DISCRIMINATOR = Uint8Array.from([98, 13, 81, 29, 86, 156, 104, 172]);
+const ESCROW_DISCRIMINATOR = Uint8Array.from([192, 99, 212, 219, 136, 109, 242, 184]);
+const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
+const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
+const ESCROW_VAULT_SEED = new TextEncoder().encode('escrow_vault');
 
 function matchesDiscriminator(data: Uint8Array, discriminator: Uint8Array) {
   if (data.length < discriminator.length) return false;
@@ -94,6 +195,31 @@ function readI64(data: Uint8Array, offset: number) {
 function readU16(data: Uint8Array, offset: number) {
   const view = new DataView(data.buffer, data.byteOffset + offset, 2);
   return view.getUint16(0, true);
+}
+
+function readU128(data: Uint8Array, offset: number) {
+  const view = new DataView(data.buffer, data.byteOffset + offset, 16);
+  const low = view.getBigUint64(0, true);
+  const high = view.getBigUint64(8, true);
+  return Number((high << 64n) + low);
+}
+
+function encodeAnchorU64(value: bigint) {
+  const buffer = new Uint8Array(8);
+  new DataView(buffer.buffer).setBigUint64(0, value, true);
+  return buffer;
+}
+
+function encodeAnchorDiscriminator(bytes: number[]) {
+  return Uint8Array.from(bytes);
+}
+
+async function deriveAta(owner: PublicKey, mint: PublicKey) {
+  const [ata] = await PublicKey.findProgramAddress(
+    [owner.toBuffer(), TOKEN_PROGRAM_ID.toBuffer(), mint.toBuffer()],
+    ASSOCIATED_TOKEN_PROGRAM_ID,
+  );
+  return ata;
 }
 
 function statusLabel(code: number) {
@@ -121,7 +247,13 @@ export function useLoanBook() {
 
   const refresh = useCallback(async () => {
     try {
-      const [loanAccounts, scheduleAccounts] = await Promise.all([
+      const [loanAccounts, scheduleAccounts, escrowAccounts, poolAccounts] = await Promise.all([
+        connection.getProgramAccounts(PROGRAM_IDS.lendingPool, {
+          commitment: 'confirmed',
+        }),
+        connection.getProgramAccounts(PROGRAM_IDS.lendingPool, {
+          commitment: 'confirmed',
+        }),
         connection.getProgramAccounts(PROGRAM_IDS.lendingPool, {
           commitment: 'confirmed',
         }),
@@ -144,6 +276,28 @@ export function useLoanBook() {
         });
       }
 
+      const escrows = new Map<number, { mint: string; pubkey: string }>();
+      for (const account of escrowAccounts) {
+        const bytes = Uint8Array.from(account.account.data as Uint8Array);
+        if (!matchesDiscriminator(bytes, ESCROW_DISCRIMINATOR)) continue;
+        const body = bytes.slice(8);
+        const loanId = readU64(body, 0);
+        escrows.set(loanId, {
+          mint: readPubkey(body, 40).toBase58(),
+          pubkey: account.pubkey.toBase58(),
+        });
+      }
+
+      const poolByKey = new Map<string, { interestIndex: number }>();
+      for (const account of poolAccounts) {
+        const bytes = Uint8Array.from(account.account.data as Uint8Array);
+        if (!matchesDiscriminator(bytes, Uint8Array.from([247, 237, 227, 245, 215, 195, 222, 70]))) continue;
+        const body = bytes.slice(8);
+        poolByKey.set(account.pubkey.toBase58(), {
+          interestIndex: readU128(body, 116),
+        });
+      }
+
       const decoded = loanAccounts
         .map((account) => {
           const raw = account.account.data;
@@ -157,7 +311,16 @@ export function useLoanBook() {
           const dueDateSecs = readI64(body, 122);
           const repaid = readU64(body, 130);
           const status = statusLabel(body[138]);
+          const escrow = readPubkey(body, 139).toBase58();
+          const pool = readPubkey(body, 8).toBase58();
+          const indexSnapshot = readU128(body, 235);
           const schedule = schedules.get(id);
+          const escrowState = escrows.get(id);
+          const currentIndex = poolByKey.get(pool)?.interestIndex ?? indexSnapshot;
+          const interestOwed = currentIndex > indexSnapshot
+            ? Math.floor((principal * (currentIndex - indexSnapshot)) / 1_000_000_000_000_000_000)
+            : 0;
+          const outstandingEstimate = Math.max(0, principal + interestOwed - repaid);
 
           return {
             id,
@@ -171,6 +334,11 @@ export function useLoanBook() {
             paidInstallments: schedule?.paid ?? 0,
             totalInstallments: schedule?.total ?? 0,
             installmentAmount: schedule?.amount ?? 0,
+            accountPubkey: account.pubkey.toBase58(),
+            poolPubkey: pool,
+            escrowPubkey: escrow,
+            collateralMint: escrowState?.mint,
+            outstandingEstimate,
           } satisfies Loan;
         })
         .filter(Boolean) as Loan[];
@@ -237,13 +405,13 @@ export function useDecisionFeed() {
 
     const load = async () => {
       try {
-        const resp = await fetch(`${MCP_API_URL}/audit`);
+        const resp = await fetch(`${MCP_API_URL}/runtime/decisions`);
         if (!resp.ok) throw new Error(String(resp.status));
         const data = await resp.json();
-        const mapped: Decision[] = (data.entries || []).slice().reverse().map((entry: any) => ({
+        const mapped: Decision[] = (data.decisions || []).map((entry: any) => ({
           action: entry.action || entry.tool || 'Tool call',
-          agent: entry.agentId || entry.agent_id || entry.clientId || 'system',
-          status: entry.success === false ? 'error' : entry.blocked ? 'error' : 'success',
+          agent: entry.agent || entry.agentId || entry.agent_id || entry.clientId || 'system',
+          status: entry.status || (entry.success === false ? 'error' : entry.blocked ? 'error' : 'success'),
           timestamp: entry.timestamp || entry.ts || 'recent',
           summary: entry.summary || entry.error || entry.status || 'No summary available',
           txHash: entry.txHash || entry.tx_hash,
@@ -270,53 +438,26 @@ export function useAgentStatus() {
     let active = true;
 
     const load = async () => {
-      const results = await Promise.all(
-        LIVE_AGENTS.map(async base => {
-          try {
-            const resp = await fetch(`${MCP_API_URL}/mcp/call`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ tool: 'get_balance', params: { agent_id: base.id } }),
-            });
-            const payload = await resp.json();
-
-            if (!resp.ok || payload.success === false) {
-              const message = payload.error || `HTTP ${resp.status}`;
-              const uninitialized = /AGENT_NOT_FOUND|wallet/i.test(message);
-              return {
-                ...base,
-                status: uninitialized ? 'uninitialized' : 'error',
-                balance: '--',
-                opsToday: 0,
-                limitUsedPct: 0,
-                lastAction: uninitialized ? 'Wallet not initialized in MCP yet' : message,
-              } satisfies AgentInfo;
-            }
-
-            const lamports = BigInt(payload.result?.lamports || '0');
-            const sol = Number(lamports) / 1_000_000_000;
-            return {
-              ...base,
-              status: 'active',
-              balance: sol.toFixed(2),
-              opsToday: Number(payload.result?.opsToday || 0),
-              limitUsedPct: Number(payload.result?.limitUsedPct || 0),
-              lastAction: payload.result?.lastAction || 'Connected to MCP runtime',
-            } satisfies AgentInfo;
-          } catch (err: any) {
-            return {
-              ...base,
-              status: 'error',
-              balance: '--',
-              opsToday: 0,
-              limitUsedPct: 0,
-              lastAction: err?.message || 'Unable to reach MCP server',
-            } satisfies AgentInfo;
-          }
-        }),
-      );
-
-      if (active) setAgents(results);
+      try {
+        const resp = await fetch(`${MCP_API_URL}/runtime/agents`);
+        if (!resp.ok) throw new Error(String(resp.status));
+        const payload = await resp.json();
+        if (!active) return;
+        const runtimeAgents: AgentInfo[] = (payload.agents || []).map((agent: any) => ({
+          ...agent,
+        }));
+        setAgents(runtimeAgents);
+      } catch (err: any) {
+        if (!active) return;
+        setAgents(LIVE_AGENTS.map(base => ({
+          ...base,
+          status: 'error',
+          balance: '--',
+          opsToday: 0,
+          limitUsedPct: 0,
+          lastAction: err?.message || 'Unable to reach MCP server',
+        })));
+      }
     };
 
     load();
@@ -359,8 +500,8 @@ export function useIntegrationGaps(services: ServiceStatus[], agents: AgentInfo[
       {
         key: 'pool-metrics',
         title: 'Pool analytics',
-        status: 'pending',
-        detail: 'Pool charts need LendingPool PDA reads or an indexed API instead of synthetic history.',
+        status: 'ready',
+        detail: 'Headline pool metrics are reading real PoolState PDAs. Historical charting is hidden until indexed history is available.',
       },
       {
         key: 'decision-stream',
@@ -379,36 +520,147 @@ export function useDemoRunner() {
   const [running, setRunning] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
   const [log, setLog] = useState<string[]>([]);
+  const [totalSteps, setTotalSteps] = useState(0);
 
-  const STEPS = [
-    { label: '[Demo] Scoring borrower via ML API…', duration: 1200 },
-    { label: '[Demo] Score: 720 (AA tier, 89% confidence)', duration: 800 },
-    { label: '[Demo] Locking 1.5 XAUT collateral in escrow PDA…', duration: 1000 },
-    { label: '[Demo] Escrow locked ✓ — PDA-owned vault', duration: 600 },
-    { label: '[Demo] Conditional disbursement — checking 4 gates…', duration: 1400 },
-    { label: '[Demo] ✓ Score valid  ✓ Escrow locked  ✓ Util OK  ✓ Agent auth', duration: 800 },
-    { label: '[Demo] Disbursed 3,000 USDT to borrower', duration: 600 },
-    { label: '[Demo] Creating 6-installment repayment schedule…', duration: 800 },
-    { label: '[Demo] Pulling installment 1/6: 500 USDT via delegate…', duration: 1000 },
-    { label: '[Demo] Borrower repays remaining balance…', duration: 800 },
-    { label: '[Demo] Loan fully repaid — releasing collateral…', duration: 1000 },
-    { label: '[Demo] 1.5 XAUT returned to borrower. Lifecycle complete ✓', duration: 0 },
-  ];
-
-  const run = useCallback(async () => {
+  const run = useCallback(async (request?: { borrower: string; amountUsd?: number; durationDays?: number }) => {
     if (running) return;
+    if (!request?.borrower) {
+      setLog(['Score a wallet first, then run the live backend flow.']);
+      return;
+    }
     setRunning(true);
     setLog([]);
     setCurrentStep(0);
-    for (let i = 0; i < STEPS.length; i++) {
-      setCurrentStep(i);
-      setLog(prev => [...prev, STEPS[i].label]);
-      if (STEPS[i].duration > 0) {
-        await new Promise(r => setTimeout(r, STEPS[i].duration));
+    try {
+      const resp = await fetch(`${MCP_API_URL}/demo/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          borrower: request.borrower,
+          amountUsd: request.amountUsd ?? 500,
+          durationDays: request.durationDays ?? 30,
+        }),
+      });
+      const payload = await resp.json();
+      if (!resp.ok || payload.success === false) {
+        throw new Error(payload.error || `HTTP ${resp.status}`);
       }
+      const steps: string[] = payload.steps || [];
+      setTotalSteps(Math.max(steps.length, 1));
+      for (let i = 0; i < steps.length; i++) {
+        setCurrentStep(i);
+        setLog(prev => [...prev, steps[i]]);
+      }
+    } catch (err: any) {
+      setLog([`Live backend demo failed: ${err?.message || 'unknown error'}`]);
+      setTotalSteps(1);
+      setCurrentStep(0);
+    } finally {
+      setRunning(false);
     }
-    setRunning(false);
   }, [running]);
 
-  return { run, running, currentStep, log, totalSteps: STEPS.length };
+  return { run, running, currentStep, log, totalSteps };
+}
+
+export function useLoanActions() {
+  const { connection } = useConnection();
+  const wallet = useWallet();
+  const [repayingLoanId, setRepayingLoanId] = useState<number | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const repayLoan = useCallback(async (loan: Loan) => {
+    if (!wallet.publicKey || !wallet.sendTransaction) {
+      throw new Error('Connect the borrower wallet to repay from the dashboard.');
+    }
+    if (!loan.accountPubkey || !loan.poolPubkey) {
+      throw new Error('Loan account metadata is incomplete.');
+    }
+    if (!loan.collateralMint || !loan.escrowPubkey) {
+      throw new Error('Escrow metadata is unavailable for this loan.');
+    }
+    if (wallet.publicKey.toBase58() !== loan.borrower) {
+      throw new Error('Connected wallet does not match the borrower for this loan.');
+    }
+
+    const tokenMintValue = import.meta.env.VITE_MOCK_USDT_MINT || import.meta.env.VITE_POOL_TOKEN_MINT;
+    if (!tokenMintValue) throw new Error('Missing VITE_MOCK_USDT_MINT or VITE_POOL_TOKEN_MINT for repay flow.');
+    const tokenMint = new PublicKey(tokenMintValue);
+
+    setRepayingLoanId(loan.id);
+    setActionError(null);
+
+    try {
+      const poolState = new PublicKey(loan.poolPubkey);
+      const [poolVault] = PublicKey.findProgramAddressSync(
+        [new TextEncoder().encode('pool_vault'), tokenMint.toBuffer()],
+        PROGRAM_IDS.lendingPool,
+      );
+      const borrowerAta = await deriveAta(wallet.publicKey, tokenMint);
+      const repayData = new Uint8Array([
+        ...encodeAnchorDiscriminator([234, 103, 67, 82, 208, 234, 219, 166]),
+        ...encodeAnchorU64(BigInt(Math.max(1, Math.round(loan.outstandingEstimate ?? (loan.principal - loan.repaid))))),
+      ]);
+
+      const repayIx = new TransactionInstruction({
+        programId: PROGRAM_IDS.lendingPool,
+        keys: [
+          { pubkey: poolState, isSigner: false, isWritable: true },
+          { pubkey: poolVault, isSigner: false, isWritable: true },
+          { pubkey: new PublicKey(loan.accountPubkey), isSigner: false, isWritable: true },
+          { pubkey: borrowerAta, isSigner: false, isWritable: true },
+          { pubkey: wallet.publicKey, isSigner: true, isWritable: true },
+          { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+        ],
+        data: repayData as unknown as Buffer,
+      });
+
+      const tx = new Transaction().add(repayIx);
+      const repaySig = await wallet.sendTransaction(tx, connection);
+      await connection.confirmTransaction(repaySig, 'confirmed');
+
+      if (loan.outstandingEstimate && loan.outstandingEstimate > 0) {
+        const collateralMint = new PublicKey(loan.collateralMint);
+        const borrowerCollateralAta = await deriveAta(wallet.publicKey, collateralMint);
+        const loanIdBytes = encodeAnchorU64(BigInt(loan.id));
+        const [escrowVault] = PublicKey.findProgramAddressSync(
+          [ESCROW_VAULT_SEED as unknown as Buffer, loanIdBytes as unknown as Buffer],
+          PROGRAM_IDS.lendingPool,
+        );
+        const releaseIx = new TransactionInstruction({
+          programId: PROGRAM_IDS.lendingPool,
+          keys: [
+            { pubkey: new PublicKey(loan.accountPubkey), isSigner: false, isWritable: false },
+            { pubkey: new PublicKey(loan.escrowPubkey), isSigner: false, isWritable: true },
+            { pubkey: escrowVault, isSigner: false, isWritable: true },
+            { pubkey: borrowerCollateralAta, isSigner: false, isWritable: true },
+            { pubkey: wallet.publicKey, isSigner: false, isWritable: false },
+            { pubkey: wallet.publicKey, isSigner: true, isWritable: true },
+            { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+          ],
+          data: encodeAnchorDiscriminator([40, 255, 12, 218, 249, 197, 179, 160]) as unknown as Buffer,
+        });
+        try {
+          const releaseTx = new Transaction().add(releaseIx);
+          const releaseSig = await wallet.sendTransaction(releaseTx, connection);
+          await connection.confirmTransaction(releaseSig, 'confirmed');
+        } catch {
+          // Repay is the primary action. Release can remain permissionless follow-up.
+        }
+      }
+    } catch (err: any) {
+      const message = err?.message || 'Repay transaction failed';
+      setActionError(message);
+      throw err;
+    } finally {
+      setRepayingLoanId(null);
+    }
+  }, [connection, wallet]);
+
+  return {
+    repayLoan,
+    repayingLoanId,
+    actionError,
+    clearActionError: () => setActionError(null),
+  };
 }
