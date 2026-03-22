@@ -102,10 +102,11 @@ function ProofDetails({ result }: { result: CreditResult }) {
 export default function CreditExplorer({ onResult }: { onResult?: (result: CreditResult) => void }) {
   const { score: fetchScore, result, loading, error } = useCreditScore();
   const [address, setAddress] = useState('');
+  const [cluster, setCluster] = useState<'devnet' | 'mainnet-beta'>('devnet');
 
   const handleScore = async () => {
     if (address.length < 32) return;
-    const scored = await fetchScore(address);
+    const scored = await fetchScore(address, cluster);
     if (scored && onResult) onResult(scored);
   };
 
@@ -122,6 +123,14 @@ export default function CreditExplorer({ onResult }: { onResult?: (result: Credi
 
       {/* Search bar */}
       <div className="flex gap-2 mb-6">
+        <select
+          value={cluster}
+          onChange={e => setCluster(e.target.value as 'devnet' | 'mainnet-beta')}
+          className="rounded-xl bg-surface-2 border border-white/[0.04] px-3 py-2.5 text-sm text-gray-200 outline-none transition-all focus:border-cred-600/30 focus:ring-1 focus:ring-cred-600/50"
+        >
+          <option value="devnet">Devnet</option>
+          <option value="mainnet-beta">Mainnet</option>
+        </select>
         <div className="relative flex-1">
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
           <input type="text" value={address} onChange={e => setAddress(e.target.value)}
@@ -189,6 +198,13 @@ export default function CreditExplorer({ onResult }: { onResult?: (result: Credi
               <span className="text-xs text-gray-500">Default probability</span>
               <span className="text-sm font-mono font-semibold text-gray-300">
                 {(result.default_probability * 100).toFixed(2)}%
+              </span>
+            </div>
+
+            <div className="mt-2 flex items-center justify-between px-3 py-2 rounded-lg bg-surface-2/40">
+              <span className="text-xs text-gray-500">Scoring cluster</span>
+              <span className="text-xs font-semibold uppercase tracking-wider text-gray-300">
+                {cluster === 'mainnet-beta' ? 'Mainnet' : 'Devnet'}
               </span>
             </div>
 

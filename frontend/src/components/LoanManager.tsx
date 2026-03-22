@@ -28,11 +28,15 @@ export default function LoanManager({
   live = false,
   onRepay,
   repayingLoanId,
+  actionError,
+  connectedWallet,
 }: {
   loans: Loan[];
   live?: boolean;
   onRepay?: (loan: Loan) => void | Promise<void>;
   repayingLoanId?: number | null;
+  actionError?: string | null;
+  connectedWallet?: string | null;
 }) {
   const [expanded, setExpanded] = useState<number | null>(null);
   const hasSampleData = !live && loans.length > 0;
@@ -44,9 +48,22 @@ export default function LoanManager({
         <span className="text-xs text-gray-500">{loans.filter(l => l.status === 'Active').length} active</span>
       </div>
 
+      <div className="mb-4 rounded-xl border border-white/[0.04] bg-surface-2/40 px-4 py-3 text-[11px] text-gray-400">
+        Connected wallet:{' '}
+        <span className="font-mono text-gray-300">
+          {connectedWallet || 'not connected'}
+        </span>
+      </div>
+
       {hasSampleData && (
         <div className="mb-4 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-[11px] text-amber-300">
           Sample lifecycle data is shown here until a live loan indexer or LendingPool client is wired into the dashboard.
+        </div>
+      )}
+
+      {actionError && (
+        <div className="mb-4 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-[11px] text-red-300">
+          {actionError}
         </div>
       )}
 
@@ -95,10 +112,11 @@ export default function LoanManager({
                     <div className="flex gap-2 mt-3">
                       <button
                         onClick={() => onRepay?.(loan)}
-                        disabled={!onRepay || repayingLoanId === loan.id}
+                        disabled={!onRepay || repayingLoanId === loan.id || (!!connectedWallet && connectedWallet !== loan.borrower)}
                         className="px-3 py-1.5 rounded-lg bg-cred-600/20 text-cred-400 text-xs font-medium hover:bg-cred-600/30 transition-colors disabled:opacity-50"
+                        title={connectedWallet && connectedWallet !== loan.borrower ? 'Connect the borrower wallet for this loan to repay.' : undefined}
                       >
-                        {repayingLoanId === loan.id ? 'Repaying…' : 'Repay'}
+                        {repayingLoanId === loan.id ? 'Repaying…' : connectedWallet && connectedWallet !== loan.borrower ? 'Wrong wallet' : 'Repay'}
                       </button>
                       <a
                         href={loan.accountPubkey

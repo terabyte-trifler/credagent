@@ -712,6 +712,61 @@ async function ensureAgentPermissionsRuntime(walletService) {
   }
 }
 
+async function submitCreditHistoryEvent(walletService, eventType, borrowerAddress, amountRaw = 0) {
+  const workspaceRoot = resolveWorkspaceRoot();
+  const idlPath = path.join(workspaceRoot, 'target/idl/credit_score_oracle.json');
+  if (!fs.existsSync(idlPath)) {
+    throw new Error(`MISSING_IDL: ${idlPath}`);
+  }
+
+  const walletPath = resolveAnchorWalletPath();
+  if (!fs.existsSync(walletPath)) {
+    throw new Error(`MISSING_ANCHOR_WALLET: ${walletPath}`);
+  }
+
+  const idl = JSON.parse(fs.readFileSync(idlPath, 'utf8'));
+  const adminSigner = loadKeypairFromFile(walletPath);
+  const provider = new anchor.AnchorProvider(
+    new anchor.web3.Connection(walletService.getRpcUrl(), 'confirmed'),
+    {
+      publicKey: adminSigner.publicKey,
+      signTransaction: async (tx) => {
+        tx.partialSign(adminSigner);
+        return tx;
+      },
+      signAllTransactions: async (txs) => txs.map((tx) => {
+        tx.partialSign(adminSigner);
+        return tx;
+      }),
+    },
+    { commitment: 'confirmed' },
+  );
+
+  const program = new anchor.Program(idl, provider);
+  const borrower = new PublicKey(borrowerAddress);
+  const [oracleState] = PublicKey.findProgramAddressSync([Buffer.from('oracle_state')], program.programId);
+  const [creditHistory] = PublicKey.findProgramAddressSync([Buffer.from('credit_history'), borrower.toBuffer()], program.programId);
+
+  const accounts = {
+    oracleState,
+    creditHistory,
+    borrower,
+    authority: adminSigner.publicKey,
+    systemProgram: SystemProgram.programId,
+  };
+
+  if (eventType === 'issued') {
+    return program.methods.recordLoanIssued(new BN(amountRaw)).accounts(accounts).rpc();
+  }
+  if (eventType === 'repaid') {
+    return program.methods.recordLoanRepaid(new BN(amountRaw)).accounts(accounts).rpc();
+  }
+  if (eventType === 'defaulted') {
+    return program.methods.recordLoanDefaulted().accounts(accounts).rpc();
+  }
+  throw new Error(`UNKNOWN_CREDIT_HISTORY_EVENT: ${eventType}`);
+}
+
 export async function createServices(config = {}) {
   const audit = config.audit || new AuditLog();
   const rpcUrl = config.rpcUrl || process.env.WDK_SOLANA_RPC_URL || 'https://api.devnet.solana.com';
@@ -1039,7 +1094,43 @@ export function createHttpServer(services, config = {}) {
           loanId: body.loanId,
           skipCollateral: Boolean(body.skipCollateral),
         });
-        return json(res, 200, { success: true, scoreResult, result });
+        let historyTxHash = null;
+        let historyError = null;
+        if (result?.onChainConfirmed && result?.offer?.principal) {
+          try {
+            historyTxHash = await submitCreditHistoryEvent(
+              services.walletService,
+              'issued',
+              body.borrower,
+              Math.ceil(Number(result.offer.principal) * TOKEN_DECIMALS),
+            );
+          } catch (error) {
+            historyError = error.message;
+          }
+        }
+        return json(res, 200, { success: true, scoreResult, result, historyTxHash, historyError });
+      } catch (error) {
+        return json(res, 400, { success: false, error: error.message });
+      }
+    }
+
+    if (pathname === '/agent/credit/record-repaid' && req.method === 'POST') {
+      const authResult = requireAuth(req, res);
+      if (!authResult) return;
+      try {
+        const body = await readBody(req);
+        if (!body?.borrower) throw new Error('Missing "borrower" field');
+        const amountRaw = Number(body.amountRaw ?? body.amount ?? 0);
+        if (!Number.isFinite(amountRaw) || amountRaw <= 0) {
+          throw new Error('Missing or invalid "amountRaw" field');
+        }
+        const txHash = await submitCreditHistoryEvent(
+          services.walletService,
+          'repaid',
+          body.borrower,
+          amountRaw,
+        );
+        return json(res, 200, { success: true, txHash });
       } catch (error) {
         return json(res, 400, { success: false, error: error.message });
       }
@@ -1075,11 +1166,27 @@ export function createHttpServer(services, config = {}) {
         const execution = String(evaluation.status || '').startsWith('DENIED')
           ? null
           : await lendingAgent.executeLoan(request.borrower);
+        let historyTxHash = null;
+        let historyError = null;
+        if (execution?.onChainConfirmed && execution?.offer?.principal) {
+          try {
+            historyTxHash = await submitCreditHistoryEvent(
+              services.walletService,
+              'issued',
+              request.borrower,
+              Math.ceil(Number(execution.offer.principal) * TOKEN_DECIMALS),
+            );
+          } catch (error) {
+            historyError = error.message;
+          }
+        }
         return json(res, 200, {
           success: true,
           scoreResult,
           evaluation,
           execution,
+          historyTxHash,
+          historyError,
           steps: formatDemoSteps(scoreResult, evaluation, execution),
         });
       } catch (error) {

@@ -27,6 +27,9 @@ import requests
 
 SOLANA_BASE58_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
 SOLANA_RPC_URL = os.getenv("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
+SOLANA_RPC_URL_DEVNET = os.getenv("SOLANA_RPC_URL_DEVNET", "https://api.devnet.solana.com")
+SOLANA_RPC_URL_MAINNET = os.getenv("SOLANA_RPC_URL_MAINNET", SOLANA_RPC_URL)
+ORACLE_PROGRAM_ID = os.getenv("CREDIT_ORACLE_PROGRAM_ID", "4cDu7SCGMzs6etzjJTyUXNXSJ6eRz54cDikSngezabhE")
 SOL_USD_FALLBACK = float(os.getenv("SOL_USD_FALLBACK", "150"))
 LIVE_SIGNATURE_LIMIT = int(os.getenv("LIVE_SIGNATURE_LIMIT", "120"))
 LIVE_TX_SAMPLE_LIMIT = int(os.getenv("LIVE_TX_SAMPLE_LIMIT", "40"))
@@ -75,6 +78,76 @@ LIQUIDATION_HINTS = ("liquid", "margin", "drift", "solend", "kamino")
 _SESSION = requests.Session()
 _RPC_CACHE: dict[tuple[str, str, str], tuple[float, object]] = {}
 _FEATURE_CACHE: dict[tuple[str, str], tuple[float, dict]] = {}
+
+CREDIT_HISTORY_ACCOUNT_SIZE = 79
+
+
+def _read_u16_le(data: bytes, offset: int) -> int:
+    return int.from_bytes(data[offset: offset + 2], "little", signed=False)
+
+
+def _read_u64_le(data: bytes, offset: int) -> int:
+    return int.from_bytes(data[offset: offset + 8], "little", signed=False)
+
+
+def _read_i64_le(data: bytes, offset: int) -> int:
+    return int.from_bytes(data[offset: offset + 8], "little", signed=True)
+
+
+def _fetch_credit_history(address: str, rpc_url: str) -> dict | None:
+    """
+    Read the protocol-native CreditHistory account from credit_score_oracle.
+
+    We intentionally use getProgramAccounts + borrower memcmp instead of deriving
+    PDAs locally so this stays dependency-light and works with plain JSON-RPC.
+    """
+    try:
+        accounts = _rpc(
+            "getProgramAccounts",
+            [
+                ORACLE_PROGRAM_ID,
+                {
+                    "encoding": "base64",
+                    "filters": [
+                        {"dataSize": CREDIT_HISTORY_ACCOUNT_SIZE},
+                        {"memcmp": {"offset": 8, "bytes": address}},
+                    ],
+                },
+            ],
+            rpc_url,
+        ) or []
+    except Exception:
+        return None
+
+
+def resolve_rpc_url(cluster: str | None = None, rpc_url: str | None = None) -> str:
+    if rpc_url:
+        return rpc_url
+    normalized_cluster = (cluster or "").lower()
+    if normalized_cluster == "devnet":
+        return SOLANA_RPC_URL_DEVNET
+    if normalized_cluster in {"mainnet", "mainnet-beta"}:
+        return SOLANA_RPC_URL_MAINNET
+    return SOLANA_RPC_URL
+
+    if not accounts:
+        return None
+
+    try:
+        encoded = accounts[0]["account"]["data"][0]
+        raw = __import__("base64").b64decode(encoded)
+        body = raw[8:]
+        return {
+            "total_loans": _read_u16_le(body, 32),
+            "repaid_loans": _read_u16_le(body, 34),
+            "defaulted_loans": _read_u16_le(body, 36),
+            "total_borrowed_usd": _read_u64_le(body, 38) / 1_000_000,
+            "total_repaid_usd": _read_u64_le(body, 46) / 1_000_000,
+            "first_loan_date": _read_i64_le(body, 54),
+            "last_activity": _read_i64_le(body, 62),
+        }
+    except Exception:
+        return None
 
 
 def validate_address(address: str) -> str:
@@ -177,7 +250,12 @@ def _regularity_score(recent_timestamps: list[int], borrowed_usd: float, repaid_
     return max(0.0, min(1.0, stability * 0.5 + repay_ratio * 0.5))
 
 
-def extract_features_live(address: str, rpc_url: str | None = None) -> dict:
+def extract_features_live(
+    address: str,
+    rpc_url: str | None = None,
+    force_fresh: bool = False,
+    cluster: str | None = None,
+) -> dict:
     """
     Live feature extraction from public Solana RPC.
 
@@ -186,11 +264,11 @@ def extract_features_live(address: str, rpc_url: str | None = None) -> dict:
     - missing protocol-specific credit history stays near zero instead of neutral
     """
     address = validate_address(address)
-    rpc_url = rpc_url or SOLANA_RPC_URL
+    rpc_url = resolve_rpc_url(cluster=cluster, rpc_url=rpc_url)
     cache_key = (rpc_url, address)
     now_ts = time.time()
     cached = _FEATURE_CACHE.get(cache_key)
-    if cached and now_ts - cached[0] < FEATURE_CACHE_TTL_SECS:
+    if not force_fresh and cached and now_ts - cached[0] < FEATURE_CACHE_TTL_SECS:
         return cached[1]
 
     if address in SYSTEM_PROGRAMS:
@@ -317,6 +395,26 @@ def extract_features_live(address: str, rpc_url: str | None = None) -> dict:
 
     avg_balance_30d_usd = current_balance_usd * 0.7 + min(tx_volume_90d_usd / 30.0, current_balance_usd * 0.5 + 250.0)
 
+    # Protocol-native credit history should outweigh heuristics when present.
+    protocol_history = _fetch_credit_history(address, rpc_url)
+    if protocol_history:
+        borrowed_estimate = max(borrowed_estimate, float(protocol_history["total_borrowed_usd"]))
+        repaid_estimate = max(repaid_estimate, float(protocol_history["total_repaid_usd"]))
+        liquidation_count = max(liquidation_count, int(protocol_history["defaulted_loans"]))
+
+        total_loans = max(0, int(protocol_history["total_loans"]))
+        repaid_loans = max(0, int(protocol_history["repaid_loans"]))
+        if total_loans > 0:
+            protocol_regularity = max(0.0, min(1.0, repaid_loans / total_loans))
+            payment_regularity = max(payment_regularity, protocol_regularity)
+            # A borrower with real protocol loan history should not look like a pure thin file.
+            defi_protocols_used = max(defi_protocols_used, 1)
+
+        first_loan_date = int(protocol_history["first_loan_date"] or 0)
+        if first_loan_date > 0:
+            protocol_history_age_days = max(0, int((now - first_loan_date) // 86400))
+            wallet_age_days = max(wallet_age_days, protocol_history_age_days)
+
     raw = {
         "tx_count_90d": tx_count_90d,
         "tx_volume_90d_usd": tx_volume_90d_usd,
@@ -371,7 +469,13 @@ def extract_features_demo(address: str) -> dict:
     return validate_features(raw)
 
 
-def extract_features(address: str, mode: str = "auto", rpc_url: str | None = None) -> tuple[dict, str]:
+def extract_features(
+    address: str,
+    mode: str = "auto",
+    rpc_url: str | None = None,
+    force_fresh: bool = False,
+    cluster: str | None = None,
+) -> tuple[dict, str]:
     """
     Extract features using live RPC when possible and fall back safely.
     Returns (features, extraction_mode_used).
@@ -380,9 +484,19 @@ def extract_features(address: str, mode: str = "auto", rpc_url: str | None = Non
     if normalized_mode == "demo":
         return extract_features_demo(address), "demo"
     if normalized_mode == "live":
-        return extract_features_live(address, rpc_url=rpc_url), "live"
+        return extract_features_live(
+            address,
+            rpc_url=rpc_url,
+            force_fresh=force_fresh,
+            cluster=cluster,
+        ), "live"
     try:
-        return extract_features_live(address, rpc_url=rpc_url), "live"
+        return extract_features_live(
+            address,
+            rpc_url=rpc_url,
+            force_fresh=force_fresh,
+            cluster=cluster,
+        ), "live"
     except Exception:
         return extract_features_demo(address), "demo"
 

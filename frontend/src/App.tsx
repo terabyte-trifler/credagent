@@ -16,6 +16,7 @@
  */
 
 import React, { useEffect, useState, useCallback } from 'react';
+import { useWallet } from '@solana/wallet-adapter-react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import { AlertCircle, CheckCircle2, Clock3, Loader2, ServerCog } from 'lucide-react';
 import AgentStatus from './components/AgentStatus';
@@ -50,12 +51,13 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
+  const wallet = useWallet();
   const demo = useDemoRunner();
   const { services } = useRuntimeStatus();
   const { agents } = useAgentStatus();
   const { decisions } = useDecisionFeed();
-  const { loans, loaded: loanBookLoaded } = useLoanBook();
-  const { pool } = usePoolState();
+  const { loans, loaded: loanBookLoaded, refresh: refreshLoans } = useLoanBook();
+  const { pool, refresh: refreshPool } = usePoolState();
   const { repayLoan, repayingLoanId, acceptOfferAndEnableAutopay, startingLoan, actionError, clearActionError } = useLoanActions();
   const { gaps } = useIntegrationGaps(services, agents, decisions, loanBookLoaded);
   const [latestCreditResult, setLatestCreditResult] = useState<CreditResult | null>(null);
@@ -206,6 +208,16 @@ export default function App() {
       }]);
     }
   }, [acceptOfferAndEnableAutopay, clearActionError, latestCreditResult, negotiationTerms]);
+
+  const handleRepay = useCallback(async (loan: any) => {
+    try {
+      clearActionError();
+      await repayLoan(loan);
+      await Promise.all([refreshLoans(), refreshPool()]);
+    } catch {
+      // actionError is already set by the hook; keep UI responsive.
+    }
+  }, [clearActionError, repayLoan, refreshLoans, refreshPool]);
 
   useEffect(() => {
     if (!latestCreditResult) return;
@@ -367,8 +379,10 @@ export default function App() {
               <LoanManager
                 loans={loans}
                 live
-                onRepay={repayLoan}
+                onRepay={handleRepay}
                 repayingLoanId={repayingLoanId}
+                actionError={actionError}
+                connectedWallet={wallet.publicKey?.toBase58() || null}
               />
             </ErrorBoundary>
           </section>

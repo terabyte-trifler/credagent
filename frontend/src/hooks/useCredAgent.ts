@@ -38,14 +38,14 @@ export function useCreditScore() {
   const [result, setResult] = useState<CreditResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const score = useCallback(async (address: string) => {
+  const score = useCallback(async (address: string, cluster: 'devnet' | 'mainnet-beta' = 'devnet') => {
     setLoading(true);
     setError(null);
     try {
       const resp = await fetch(`${ML_API_URL}/score`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ address }),
+        body: JSON.stringify({ address, force_fresh: true, cluster }),
       });
       if (!resp.ok) throw new Error(`API error: ${resp.status}`);
       const data = await resp.json();
@@ -483,6 +483,19 @@ export function useLoanActions() {
       const tx = new Transaction().add(repayIx);
       const repaySig = await wallet.sendTransaction(tx, connection);
       await connection.confirmTransaction(repaySig, 'confirmed');
+
+      try {
+        await fetch(`${MCP_API_URL}/agent/credit/record-repaid`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            borrower: loan.borrower,
+            amountRaw: repayAmountRaw.toString(),
+          }),
+        });
+      } catch {
+        // Repayment already succeeded on-chain; history sync is best effort here.
+      }
 
       if (repayAmountRaw > 0n) {
         const collateralMint = new PublicKey(loan.collateralMint);

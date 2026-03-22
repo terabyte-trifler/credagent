@@ -102,12 +102,12 @@ def error_response(msg: str, code: int = 400):
     return jsonify({"error": msg, "status": code}), code
 
 
-def resolve_features(address: str):
+def resolve_features(address: str, force_fresh: bool = False, cluster: str | None = None):
     """
     Use live extraction in normal runs and deterministic demo extraction in tests/offline fallback.
     """
     mode = "demo" if app.config.get("TESTING") else FEATURE_MODE
-    return extract_features(address, mode=mode)
+    return extract_features(address, mode=mode, force_fresh=force_fresh, cluster=cluster)
 
 
 # ═══════════════════════════════════════════
@@ -164,7 +164,11 @@ def score_address():
     if "features" in data and isinstance(data["features"], dict):
         features = validate_features(data["features"])
     else:
-        features, extraction_mode = resolve_features(address)
+        features, extraction_mode = resolve_features(
+            address,
+            force_fresh=bool(data.get("force_fresh", False)),
+            cluster=data.get("cluster"),
+        )
 
     # ML prediction
     vector = features_to_vector(features)
@@ -223,7 +227,11 @@ def batch_score():
     for addr in addresses:
         try:
             addr = validate_address(addr)
-            features, extraction_mode = resolve_features(addr)
+            features, extraction_mode = resolve_features(
+                addr,
+                force_fresh=bool(data.get("force_fresh", False)),
+                cluster=data.get("cluster"),
+            )
             vector = features_to_vector(features)
             default_prob = predict_default_probability(vector)
             result = compute_credit_score(features, default_prob)
@@ -267,7 +275,11 @@ def get_features(address):
     except ValueError as e:
         return error_response(str(e))
 
-    features, extraction_mode = resolve_features(address)
+    features, extraction_mode = resolve_features(
+        address,
+        force_fresh=bool(request.args.get("force_fresh", "").lower() in {"1", "true", "yes"}),
+        cluster=request.args.get("cluster"),
+    )
     return jsonify({
         "address": address,
         "features": features,

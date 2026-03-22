@@ -146,17 +146,38 @@ def _protocol_diversity(f: dict) -> float:
 
 def _new_credit(f: dict) -> float:
     """
-    10% weight. Recent activity and cross-chain presence.
+    10% weight. Recent credit-seeking behavior and wallet activity.
+
+    This should move when a borrower actually uses the CredAgent protocol,
+    not only when they bridge or hold attestations.
     """
-    tx_count    = f.get("tx_count_90d", 0)
+    tx_count = f.get("tx_count_90d", 0)
     cross_chain = f.get("cross_chain_activity", 0)
     attestations = f.get("nft_attestations", 0)
+    borrowed = f.get("total_borrowed_usd", 0)
+    repaid = f.get("total_repaid_usd", 0)
+    protocols = f.get("defi_protocols_used", 0)
 
-    activity    = min(tx_count / 100, 1.0)
+    activity = min(tx_count / 100, 1.0)
     chain_score = min(cross_chain / 5, 1.0)
-    nft_score   = min(attestations / 3, 1.0)
+    nft_score = min(attestations / 3, 1.0)
+    protocol_score = min(protocols / 4, 1.0)
 
-    return activity * 0.5 + chain_score * 0.25 + nft_score * 0.25
+    if borrowed > 0:
+        credit_signal = min(math.log10(1 + borrowed) / 3, 1.0)
+        repayment_signal = min(repaid / max(borrowed, 1), 1.0)
+    else:
+        credit_signal = 0.0
+        repayment_signal = 0.0
+
+    return (
+        activity * 0.25
+        + credit_signal * 0.35
+        + repayment_signal * 0.20
+        + protocol_score * 0.10
+        + chain_score * 0.05
+        + nft_score * 0.05
+    )
 
 
 # ═══════════════════════════════════════════
