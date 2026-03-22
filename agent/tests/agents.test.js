@@ -231,6 +231,35 @@ describe('[Unit] LendingDecisionAgent', () => {
     expect(r.status).toBe('DENIED_C_TIER');
   });
 
+  test('starter path offers micro-loan to fresh C-tier wallet', async () => {
+    const bridge = createMockBridge({
+      compute_credit_score: async () => ({
+        success: true,
+        result: {
+          score: 300,
+          risk_tier: 'C',
+          risk_tier_num: 0,
+          confidence: 20,
+          default_probability: 0.95,
+          model_hash: 'b'.repeat(64),
+          starter_eligible: true,
+          recommended_terms: {
+            max_ltv_bps: 10000,
+            rate_bps: 1800,
+            max_loan_usd: 100,
+            max_duration_days: 14,
+          },
+        },
+      }),
+    });
+    const a = new LendingDecisionAgent(bridge);
+    const r = await a.evaluateLoan(ADDR, 500, 30);
+    expect(r.status).toBe('STARTER_OFFERED');
+    expect(r.tier).toBe('STARTER');
+    expect(r.offer.principal).toBe(100);
+    expect(r.offer.durationDays).toBe(14);
+  });
+
   test('negotiation: 3 rounds then expired', async () => {
     await agent.evaluateLoan(ADDR, 3000, 60);
     await agent.negotiate(ADDR, { rateBps: 600 });

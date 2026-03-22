@@ -325,6 +325,10 @@ export const createSchedule = {
       num_installments: { type: 'integer', minimum: 1, maximum: 52 },
       interval_seconds: { type: 'integer', minimum: 3600, description: 'Min 1 hour between installments' },
       collection_agent_address: { type: 'string', description: 'Collection agent pubkey (base58)' },
+      build_only: {
+        type: 'boolean',
+        description: 'Optional internal flag for validating schedule inputs without submitting the transaction.',
+      },
     },
     required: ['agent_id', 'loan_id', 'num_installments', 'interval_seconds', 'collection_agent_address'],
     additionalProperties: false,

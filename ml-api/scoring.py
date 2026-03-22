@@ -51,6 +51,13 @@ WEIGHTS = {
 # Verify weights sum to 1.0 at import time
 assert abs(sum(WEIGHTS.values()) - 1.0) < 1e-9, "FICO weights must sum to 1.0"
 
+STARTER_TERMS = {
+    "max_ltv_bps": 10000,
+    "rate_bps": 1800,
+    "max_loan_usd": 100,
+    "max_duration_days": 14,
+}
+
 
 # ═══════════════════════════════════════════
 # Component Scoring Functions
@@ -206,6 +213,9 @@ def compute_credit_score(
 
     # Risk tier
     risk_tier, risk_tier_num = classify_risk_tier(score)
+    starter_eligible = is_starter_eligible(f, score, default_probability)
+    lending_path = "starter" if risk_tier_num == 0 and starter_eligible else ("standard" if risk_tier_num > 0 else "denied")
+    recommended_terms = STARTER_TERMS.copy() if lending_path == "starter" else get_tier_terms(risk_tier_num)
 
     return {
         "score": score,
@@ -214,7 +224,9 @@ def compute_credit_score(
         "risk_tier_num": risk_tier_num,
         "components": components,
         "default_probability": round(default_probability, 6),
-        "recommended_terms": get_tier_terms(risk_tier_num),
+        "recommended_terms": recommended_terms,
+        "starter_eligible": starter_eligible,
+        "lending_path": lending_path,
     }
 
 
@@ -249,6 +261,38 @@ def get_tier_terms(tier_num: int) -> dict:
         0: {"max_ltv_bps": 0,    "rate_bps": 0,    "max_loan_usd": 0,     "max_duration_days": 0},
     }
     return terms.get(tier_num, terms[0])
+
+
+def is_starter_eligible(features: dict, score: int, default_probability: float) -> bool:
+    """
+    Allow tiny, short-duration starter loans for fresh wallets without negative history.
+
+    This is intentionally separate from normal BB+ eligibility so thin-file wallets
+    can be tested without being treated like established borrowers.
+    """
+    age = features.get("wallet_age_days", 0)
+    tx_count = features.get("tx_count_90d", 0)
+    borrowed = features.get("total_borrowed_usd", 0)
+    repaid = features.get("total_repaid_usd", 0)
+    liquidations = features.get("liquidation_count", 0)
+    protocol_count = features.get("defi_protocols_used", 0)
+    balance = features.get("avg_balance_30d_usd", 0)
+
+    if score >= BB_THRESHOLD:
+        return False
+    if liquidations > 0:
+        return False
+    if borrowed > 0 or repaid > 0:
+        return False
+    if age > 45:
+        return False
+    if tx_count > 5:
+        return False
+    if default_probability >= 0.9995:
+        return False
+
+    # Some sign of a genuinely fresh user rather than an ancient inert program account.
+    return age >= 0 and (age <= 7 or tx_count > 0 or protocol_count > 0 or balance > 0)
 
 
 # ═══════════════════════════════════════════

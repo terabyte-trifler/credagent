@@ -7,11 +7,12 @@ import { Send, Bot, User, Play, Loader2, CheckCircle, XCircle, Clock, ExternalLi
 import type { ChatMessage, Decision } from '../lib/constants';
 
 export function NegotiationChat({
-  messages, onSend, loanTerms,
+  messages, onSend, loanTerms, actions,
 }: {
   messages: ChatMessage[];
   onSend: (text: string) => void;
   loanTerms?: { rateBps: number; durationDays: number; collateral: string } | null;
+  actions?: React.ReactNode;
 }) {
   const [input, setInput] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -78,6 +79,11 @@ export function NegotiationChat({
           <Send size={15} />
         </button>
       </div>
+      {actions && (
+        <div className="px-3 pb-3">
+          {actions}
+        </div>
+      )}
     </div>
   );
 }

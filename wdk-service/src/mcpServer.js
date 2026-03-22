@@ -13,8 +13,15 @@
  */
 
 import http from 'node:http';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import dotenv from 'dotenv';
+import * as anchor from '@coral-xyz/anchor';
+import BN from 'bn.js';
+import { Keypair, PublicKey, SystemProgram } from '@solana/web3.js';
+import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import { WalletService } from './walletService.js';
 import { TokenOps } from './tokenOps.js';
 import { BridgeService } from './bridgeService.js';
@@ -26,7 +33,11 @@ import { CreditAssessmentAgent } from '../../agent/src/creditAgent.js';
 import { LendingDecisionAgent } from '../../agent/src/lendingAgent.js';
 import { CollectionTrackerAgent } from '../../agent/src/collectionAgent.js';
 import { YieldOptimizerAgent } from '../../agent/src/yieldAgent.js';
-import 'dotenv/config';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
+dotenv.config({ path: path.resolve(__dirname, '../../.env'), override: false });
 
 const DEFAULT_HOST = process.env.MCP_HOST || '127.0.0.1';
 const DEFAULT_PORT = Number.parseInt(process.env.MCP_PORT || '3100', 10);
@@ -57,6 +68,17 @@ const DEFAULT_AGENT_META = {
   'collection-agent': { name: 'Collection Agent', role: 'Collection', icon: 'clock', color: '#f59e0b' },
   'yield-agent': { name: 'Yield Agent', role: 'Yield', icon: 'trending-up', color: '#3b82f6' },
 };
+
+const DEFAULT_AGENT_RUNTIME = {
+  'credit-agent': { role: { oracle: {} }, tier: { operate: {} }, dailyLimit: '1000000' },
+  'lending-agent': { role: { lending: {} }, tier: { manage: {} }, dailyLimit: '10000000000' },
+  'collection-agent': { role: { collection: {} }, tier: { operate: {} }, dailyLimit: '1000000000' },
+  'yield-agent': { role: { yield: {} }, tier: { manage: {} }, dailyLimit: '5000000000' },
+};
+
+const TOKEN_DECIMALS = 1_000_000;
+const DEFAULT_POOL_HISTORY_LIMIT = 288;
+const DEFAULT_POOL_SNAPSHOT_MS = 5_000;
 
 function isLocalHost(host) {
   return host === '127.0.0.1' || host === 'localhost';
@@ -256,6 +278,208 @@ function buildDecisionFeed(services, count) {
     .slice(0, limit);
 }
 
+function readU64(buf, offset) {
+  return Number(buf.readBigUInt64LE(offset));
+}
+
+function readU32(buf, offset) {
+  return buf.readUInt32LE(offset);
+}
+
+function readU16(buf, offset) {
+  return buf.readUInt16LE(offset);
+}
+
+function resolveLendingPoolProgramId() {
+  const idlPath = path.join(resolveWorkspaceRoot(), 'target/idl/lending_pool.json');
+  if (!fs.existsSync(idlPath)) {
+    throw new Error(`MISSING_IDL: ${idlPath}`);
+  }
+  const idl = JSON.parse(fs.readFileSync(idlPath, 'utf8'));
+  return new PublicKey(idl.address);
+}
+
+function deriveLendingPoolAddresses(tokenMint) {
+  const programId = resolveLendingPoolProgramId();
+  const [poolState] = PublicKey.findProgramAddressSync(
+    [Buffer.from('pool'), tokenMint.toBuffer()],
+    programId,
+  );
+  return { programId, poolState };
+}
+
+async function fetchLivePoolSnapshot(walletService) {
+  const connection = new anchor.web3.Connection(walletService.getRpcUrl(), 'confirmed');
+  const tokenMint = new PublicKey(process.env.MOCK_USDT_MINT);
+  const { poolState } = deriveLendingPoolAddresses(tokenMint);
+  const account = await connection.getAccountInfo(poolState, 'confirmed');
+  if (!account) {
+    return {
+      timestamp: new Date().toISOString(),
+      deposited: 0,
+      borrowed: 0,
+      utilization: 0,
+      interestEarned: 0,
+      activeLoans: 0,
+      defaultRate: 0,
+      baseRateBps: 0,
+    };
+  }
+
+  const body = Buffer.from(account.data).subarray(8);
+  const aggregated = {
+    totalDeposited: readU64(body, 64) / TOKEN_DECIMALS,
+    totalBorrowed: readU64(body, 72) / TOKEN_DECIMALS,
+    interestEarned: readU64(body, 80) / TOKEN_DECIMALS,
+    totalDefaults: readU64(body, 88),
+    activeLoans: readU32(body, 96),
+    totalLoans: readU32(body, 100),
+    baseRateBps: readU16(body, 112),
+  };
+
+  return {
+    timestamp: new Date().toISOString(),
+    deposited: aggregated.totalDeposited,
+    borrowed: aggregated.totalBorrowed,
+    utilization: aggregated.totalDeposited > 0
+      ? Number(((aggregated.totalBorrowed / aggregated.totalDeposited) * 100).toFixed(2))
+      : 0,
+    interestEarned: aggregated.interestEarned,
+    activeLoans: aggregated.activeLoans,
+    defaultRate: aggregated.totalLoans > 0
+      ? Number(((aggregated.totalDefaults / aggregated.totalLoans) * 100).toFixed(2))
+      : 0,
+    baseRateBps: aggregated.baseRateBps,
+  };
+}
+
+async function fetchLiveLoanRows(walletService) {
+  const connection = new anchor.web3.Connection(walletService.getRpcUrl(), 'confirmed');
+  const tokenMint = new PublicKey(process.env.MOCK_USDT_MINT);
+  const { programId, poolState } = deriveLendingPoolAddresses(tokenMint);
+  const poolAccount = await connection.getAccountInfo(poolState, 'confirmed');
+  if (!poolAccount) return [];
+  const poolBody = Buffer.from(poolAccount.data).subarray(8);
+  const nextLoanId = readU64(poolBody, 104);
+  const interestIndex = readU64(poolBody, 116) + (readU64(poolBody, 124) * 2 ** 64);
+  const loans = [];
+
+  for (let loanId = 1; loanId < nextLoanId; loanId += 1) {
+    const loanSeed = Buffer.alloc(8);
+    loanSeed.writeBigUInt64LE(BigInt(loanId));
+    const [loanPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from('loan'), poolState.toBuffer(), loanSeed],
+      programId,
+    );
+    const [schedulePda] = PublicKey.findProgramAddressSync([Buffer.from('schedule'), loanSeed], programId);
+    const [escrowPda] = PublicKey.findProgramAddressSync([Buffer.from('escrow'), loanSeed], programId);
+    const [loanInfo, scheduleInfo, escrowInfo] = await Promise.all([
+      connection.getAccountInfo(loanPda, 'confirmed'),
+      connection.getAccountInfo(schedulePda, 'confirmed'),
+      connection.getAccountInfo(escrowPda, 'confirmed'),
+    ]);
+    if (!loanInfo) continue;
+
+    const body = Buffer.from(loanInfo.data).subarray(8);
+    const principalRaw = readU64(body, 104);
+    const principal = principalRaw / TOKEN_DECIMALS;
+    const rateBps = readU16(body, 112);
+    const dueDateSecs = Number(body.readBigInt64LE(122));
+    const repaidRaw = readU64(body, 130);
+    const repaid = repaidRaw / TOKEN_DECIMALS;
+    const statusCode = body[138];
+    const borrower = new PublicKey(body.subarray(40, 72)).toBase58();
+    const escrowPubkey = new PublicKey(body.subarray(139, 171)).toBase58();
+    const indexLow = readU64(body, 235);
+    const indexHigh = readU64(body, 243);
+    const indexSnapshot = indexLow + (indexHigh * 2 ** 64);
+    const interestOwedRaw = interestIndex > indexSnapshot
+      ? Math.floor((principalRaw * (interestIndex - indexSnapshot)) / 1_000_000_000_000_000_000)
+      : 0;
+
+    let paidInstallments = 0;
+    let totalInstallments = 0;
+    let installmentAmount = 0;
+    if (scheduleInfo) {
+      const sched = Buffer.from(scheduleInfo.data).subarray(8);
+      totalInstallments = sched[72];
+      paidInstallments = sched[73];
+      installmentAmount = readU64(sched, 74) / TOKEN_DECIMALS;
+    }
+
+    let collateralMint = null;
+    if (escrowInfo) {
+      const escrow = Buffer.from(escrowInfo.data).subarray(8);
+      collateralMint = new PublicKey(escrow.subarray(40, 72)).toBase58();
+    }
+
+    loans.push({
+      id: loanId,
+      borrower,
+      principal,
+      rateBps,
+      dueDate: new Date(dueDateSecs * 1000).toISOString().slice(0, 10),
+      repaid,
+      status: statusCode === 1 ? 'Repaid' : (statusCode === 2 || statusCode === 3 ? 'Defaulted' : 'Active'),
+      escrowStatus: statusCode === 1 ? 'Released' : (statusCode === 2 || statusCode === 3 ? 'Liquidated' : 'Locked'),
+      paidInstallments,
+      totalInstallments,
+      installmentAmount,
+      accountPubkey: loanPda.toBase58(),
+      poolPubkey: poolState.toBase58(),
+      escrowPubkey,
+      collateralMint,
+      outstandingEstimate: Math.max(0, (principalRaw + interestOwedRaw - repaidRaw) / TOKEN_DECIMALS),
+    });
+  }
+
+  return loans.sort((a, b) => b.id - a.id);
+}
+
+class PoolHistoryStore {
+  #walletService;
+  #filePath;
+  #entries = [];
+  #limit;
+  #intervalMs;
+  #timer = null;
+
+  constructor(walletService, options = {}) {
+    this.#walletService = walletService;
+    this.#filePath = options.filePath || path.resolve(process.cwd(), '.mcp-state/pool-history.json');
+    this.#limit = options.limit || DEFAULT_POOL_HISTORY_LIMIT;
+    this.#intervalMs = options.intervalMs || DEFAULT_POOL_SNAPSHOT_MS;
+  }
+
+  async init() {
+    await fs.promises.mkdir(path.dirname(this.#filePath), { recursive: true });
+    try {
+      const parsed = JSON.parse(await fs.promises.readFile(this.#filePath, 'utf8'));
+      this.#entries = Array.isArray(parsed?.entries) ? parsed.entries.slice(-this.#limit) : [];
+    } catch {}
+    await this.capture();
+    this.#timer = setInterval(() => {
+      this.capture().catch(() => {});
+    }, this.#intervalMs);
+  }
+
+  async capture() {
+    const snapshot = await fetchLivePoolSnapshot(this.#walletService);
+    this.#entries.push(snapshot);
+    this.#entries = this.#entries.slice(-this.#limit);
+    await fs.promises.writeFile(this.#filePath, JSON.stringify({ entries: this.#entries }, null, 2));
+    return snapshot;
+  }
+
+  getRecent(count = 30) {
+    return this.#entries.slice(-Math.max(1, Math.min(count, this.#limit)));
+  }
+
+  close() {
+    if (this.#timer) clearInterval(this.#timer);
+  }
+}
+
 async function buildAgentRuntimeSnapshot(services) {
   const combinedAudit = combineAuditEntries(services, 500);
   const now = Date.now();
@@ -323,6 +547,62 @@ function parseLoanRequest(body = {}) {
   };
 }
 
+async function buildExecutionPrep(services, borrower) {
+  const session = services.lendingAgent?.getActiveSession?.(borrower);
+  if (!session?.currentOffer) {
+    throw new Error('No active negotiated offer for this borrower');
+  }
+
+  const loanIdResult = await services.mcpBridge.executeTool('get_next_loan_id', {
+    agent_id: 'lending-agent',
+  });
+  if (!loanIdResult.success || !Number.isInteger(loanIdResult.result?.loan_id)) {
+    throw new Error(`LOAN_ID_FAILED: ${loanIdResult.error || 'No loan_id returned'}`);
+  }
+
+  const loanId = Number(loanIdResult.result.loan_id);
+  const borrowerPubkey = new PublicKey(borrower);
+  const usdtMint = new PublicKey(process.env.MOCK_USDT_MINT);
+  const collateralMint = new PublicKey(process.env.MOCK_XAUT_MINT || '11111111111111111111111111111111');
+  const collectionAgentAddress = getCollectionAgentAddress(services.walletService);
+  const { programId, poolState } = deriveLendingPoolAddresses(usdtMint);
+
+  const loanSeed = Buffer.alloc(8);
+  loanSeed.writeBigUInt64LE(BigInt(loanId));
+  const [escrowState] = PublicKey.findProgramAddressSync([Buffer.from('escrow'), loanSeed], programId);
+  const [escrowVault] = PublicKey.findProgramAddressSync([Buffer.from('escrow_vault'), loanSeed], programId);
+  const [borrowerCollateralAta] = PublicKey.findProgramAddressSync(
+    [borrowerPubkey.toBuffer(), TOKEN_PROGRAM_ID.toBuffer(), collateralMint.toBuffer()],
+    ASSOCIATED_TOKEN_PROGRAM_ID,
+  );
+
+  const xautPrice = Number(process.env.MOCK_XAUT_PRICE_USD || '2300');
+  const collateralAmountRaw = collateralMint.toBase58() === process.env.MOCK_XAUT_MINT
+    ? Math.max(1, Math.ceil((session.currentOffer.collateralUsd / xautPrice) * TOKEN_DECIMALS))
+    : Math.max(1, Math.ceil(session.currentOffer.collateralUsd * TOKEN_DECIMALS));
+  const autopayAmountRaw = Math.max(
+    1,
+    Math.ceil(session.currentOffer.installmentAmount * session.currentOffer.numInstallments * TOKEN_DECIMALS),
+  );
+
+  return {
+    borrower,
+    loanId,
+    offer: session.currentOffer,
+    lendingPath: session.lendingPath,
+    poolState: poolState.toBase58(),
+    programId: programId.toBase58(),
+    usdtMint: usdtMint.toBase58(),
+    collateralMint: collateralMint.toBase58(),
+    borrowerCollateralAta: borrowerCollateralAta.toBase58(),
+    escrowState: escrowState.toBase58(),
+    escrowVault: escrowVault.toBase58(),
+    collateralAmountRaw: String(collateralAmountRaw),
+    collectionAgentAddress,
+    autopayAmountRaw: String(autopayAmountRaw),
+  };
+}
+
 function formatDemoSteps(scoreResult, evaluation, execution) {
   const steps = [];
   if (scoreResult) {
@@ -354,10 +634,92 @@ function formatDemoSteps(scoreResult, evaluation, execution) {
   return steps;
 }
 
+function resolveWorkspaceRoot() {
+  return path.resolve(__dirname, '../..');
+}
+
+function resolveAnchorWalletPath() {
+  return process.env.ANCHOR_WALLET || path.join(os.homedir(), '.config/solana/id.json');
+}
+
+function loadKeypairFromFile(walletPath) {
+  const secretKey = Uint8Array.from(JSON.parse(fs.readFileSync(walletPath, 'utf8')));
+  return Keypair.fromSecretKey(secretKey);
+}
+
+async function ensureAgentPermissionsRuntime(walletService) {
+  const workspaceRoot = resolveWorkspaceRoot();
+  const idlPath = path.join(workspaceRoot, 'target/idl/agent_permissions.json');
+  if (!fs.existsSync(idlPath)) {
+    throw new Error(`MISSING_IDL: ${idlPath}`);
+  }
+
+  const walletPath = resolveAnchorWalletPath();
+  if (!fs.existsSync(walletPath)) {
+    throw new Error(`MISSING_ANCHOR_WALLET: ${walletPath}`);
+  }
+
+  const idl = JSON.parse(fs.readFileSync(idlPath, 'utf8'));
+  const adminSigner = loadKeypairFromFile(walletPath);
+  const provider = new anchor.AnchorProvider(
+    new anchor.web3.Connection(walletService.getRpcUrl(), 'confirmed'),
+    {
+      publicKey: adminSigner.publicKey,
+      signTransaction: async (tx) => {
+        tx.partialSign(adminSigner);
+        return tx;
+      },
+      signAllTransactions: async (txs) => txs.map((tx) => {
+        tx.partialSign(adminSigner);
+        return tx;
+      }),
+    },
+    { commitment: 'confirmed' },
+  );
+
+  const program = new anchor.Program(idl, provider);
+  const [permState] = PublicKey.findProgramAddressSync([Buffer.from('perm_state')], program.programId);
+  const existingPermState = await program.account.permState.fetchNullable(permState);
+  if (!existingPermState) {
+    await program.methods.initialize().accounts({
+      permState,
+      admin: adminSigner.publicKey,
+      systemProgram: SystemProgram.programId,
+    }).rpc();
+  }
+
+  for (const [agentId, config] of Object.entries(DEFAULT_AGENT_RUNTIME)) {
+    if (!walletService.hasWallet(agentId)) continue;
+    const agentWallet = new PublicKey(walletService.getAddress(agentId));
+    const [agentIdentity] = PublicKey.findProgramAddressSync(
+      [Buffer.from('agent_id'), agentWallet.toBuffer()],
+      program.programId,
+    );
+    const existingIdentity = await program.account.agentIdentity.fetchNullable(agentIdentity);
+    if (existingIdentity) continue;
+
+    await program.methods.registerAgent(
+      config.role,
+      config.tier,
+      new BN(config.dailyLimit),
+    ).accounts({
+      permState,
+      agentIdentity,
+      agentWallet,
+      admin: adminSigner.publicKey,
+      systemProgram: SystemProgram.programId,
+    }).rpc();
+  }
+}
+
 export async function createServices(config = {}) {
   const audit = config.audit || new AuditLog();
   const rpcUrl = config.rpcUrl || process.env.WDK_SOLANA_RPC_URL || 'https://api.devnet.solana.com';
-  const walletService = new WalletService({ rpcUrl });
+  const walletService = new WalletService({
+    rpcUrl,
+    stateDir: config.stateDir || path.resolve(process.cwd(), '.mcp-state'),
+  });
+  await walletService.restorePersistedWallets();
   const tokenOps = new TokenOps(walletService, rpcUrl, audit);
   const bridgeService = new BridgeService({ audit });
 
@@ -384,6 +746,18 @@ export async function createServices(config = {}) {
     getCollectionAgentAddress(walletService),
   );
   const yieldAgent = config.yieldAgent || new YieldOptimizerAgent(mcpBridge);
+  const poolHistory = config.poolHistory || new PoolHistoryStore(walletService, {
+    filePath: path.resolve(process.cwd(), '.mcp-state/pool-history.json'),
+  });
+
+  for (const agentId of Object.keys(DEFAULT_AGENT_META)) {
+    if (!walletService.hasWallet(agentId)) {
+      await walletService.createAgentWallet(agentId);
+    }
+  }
+
+  await ensureAgentPermissionsRuntime(walletService);
+  await poolHistory.init();
 
   return {
     walletService,
@@ -397,6 +771,7 @@ export async function createServices(config = {}) {
     collectionAgent,
     lendingAgent,
     yieldAgent,
+    poolHistory,
   };
 }
 
@@ -585,11 +960,36 @@ export function createHttpServer(services, config = {}) {
       return json(res, 200, { agents });
     }
 
+    if (pathname === '/runtime/pool' && req.method === 'GET') {
+      const authResult = requireAuth(req, res);
+      if (!authResult) return;
+      const latest = await services.poolHistory.capture().catch(() => null);
+      return json(res, 200, { pool: latest });
+    }
+
+    if (pathname === '/runtime/loans' && req.method === 'GET') {
+      const authResult = requireAuth(req, res);
+      if (!authResult) return;
+      const loans = await fetchLiveLoanRows(services.walletService).catch(() => []);
+      return json(res, 200, { loans });
+    }
+
     if (pathname === '/runtime/decisions' && req.method === 'GET') {
       const authResult = requireAuth(req, res);
       if (!authResult) return;
       const count = Number.parseInt(url.searchParams.get('count') || '50', 10);
       return json(res, 200, { decisions: buildDecisionFeed(services, count) });
+    }
+
+    if (pathname === '/runtime/pool-history' && req.method === 'GET') {
+      const authResult = requireAuth(req, res);
+      if (!authResult) return;
+      const count = Number.parseInt(url.searchParams.get('count') || '30', 10);
+      const latest = await services.poolHistory.capture().catch(() => null);
+      return json(res, 200, {
+        latest,
+        points: services.poolHistory.getRecent(count),
+      });
     }
 
     if (pathname === '/agent/lending/evaluate' && req.method === 'POST') {
@@ -635,8 +1035,24 @@ export function createHttpServer(services, config = {}) {
         const scoreResult = await creditAgent.scoreBorrower(body.borrower, {
           forceFresh: Boolean(body.forceFresh),
         });
-        const result = await lendingAgent.executeLoan(body.borrower);
+        const result = await lendingAgent.executeLoan(body.borrower, {
+          loanId: body.loanId,
+          skipCollateral: Boolean(body.skipCollateral),
+        });
         return json(res, 200, { success: true, scoreResult, result });
+      } catch (error) {
+        return json(res, 400, { success: false, error: error.message });
+      }
+    }
+
+    if (pathname === '/agent/lending/prepare-execution' && req.method === 'POST') {
+      const authResult = requireAuth(req, res);
+      if (!authResult) return;
+      try {
+        const body = await readBody(req);
+        if (!body?.borrower) throw new Error('Missing "borrower" field');
+        const result = await buildExecutionPrep(services, body.borrower);
+        return json(res, 200, { success: true, result });
       } catch (error) {
         return json(res, 400, { success: false, error: error.message });
       }

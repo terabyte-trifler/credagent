@@ -5,10 +5,14 @@ use crate::state::*;
 use crate::errors::LendError;
 use crate::events::LoanDisbursed;
 
+const STARTER_MAX_PRINCIPAL: u64 = 100_000_000; // 100 USDT (6 decimals)
+const STARTER_MAX_DURATION_DAYS: u16 = 14;
+const STARTER_MIN_RATE_BPS: u16 = 1_800;
+
 /// PAYMENT PRIMITIVE 2: Conditional Disbursement
 ///
 /// Atomically validates 4 gates before releasing loan funds:
-///   GATE 1: Credit score valid (not expired, tier >= BB)
+///   GATE 1: Credit score valid (not expired, tier >= BB or bounded starter micro-loan)
 ///   GATE 2: Collateral locked in escrow (status == Locked)
 ///   GATE 3: Pool utilization below maximum after this loan
 ///   GATE 4: Agent authorized and within spending limit
@@ -136,7 +140,11 @@ pub fn handler(
     let expires_at = i64::from_le_bytes(score_data[52..60].try_into().unwrap());
 
     require!(expires_at > now, LendError::InvalidScore);
-    require!(risk_tier >= 1, LendError::ScoreTooLow); // BB or higher
+
+    let starter_profile = principal <= STARTER_MAX_PRINCIPAL
+        && duration_days <= STARTER_MAX_DURATION_DAYS
+        && interest_rate_bps >= STARTER_MIN_RATE_BPS;
+    require!(risk_tier >= 1 || starter_profile, LendError::ScoreTooLow);
 
     // ════════════════════════════════════
     // GATE 2: Collateral locked in escrow

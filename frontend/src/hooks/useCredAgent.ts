@@ -4,7 +4,7 @@
 
 import { useState, useCallback, useEffect } from 'react';
 import { useConnection, useWallet } from '@solana/wallet-adapter-react';
-import { PublicKey, Transaction, TransactionInstruction } from '@solana/web3.js';
+import { PublicKey, SystemProgram, SYSVAR_RENT_PUBKEY, Transaction, TransactionInstruction } from '@solana/web3.js';
 import {
   MCP_API_URL,
   ML_API_URL,
@@ -18,6 +18,19 @@ import {
   type PoolState,
   type ServiceStatus,
 } from '../lib/constants';
+
+const TOKEN_DECIMALS = 1_000_000;
+
+async function fetchPoolHistory() {
+  try {
+    const resp = await fetch(`${MCP_API_URL}/runtime/pool-history?count=30`);
+    if (!resp.ok) throw new Error(String(resp.status));
+    const data = await resp.json();
+    return Array.isArray(data.points) ? data.points : [];
+  } catch {
+    return [];
+  }
+}
 
 /** Fetch credit score from ML API */
 export function useCreditScore() {
@@ -50,97 +63,27 @@ export function useCreditScore() {
   return { score, result, loading, error, reset: () => { setResult(null); setError(null); } };
 }
 
-/** Fetch pool state. Falls back to clearly labeled demo data when no live source exists. */
 export function usePoolState() {
-  const { connection } = useConnection();
   const [pool, setPool] = useState<PoolState | null>(null);
 
   const refresh = useCallback(async () => {
     try {
-      const poolDiscriminator = Uint8Array.from([247, 237, 227, 245, 215, 195, 222, 70]);
-      const accounts = await connection.getProgramAccounts(PROGRAM_IDS.lendingPool, {
-        commitment: 'confirmed',
-      });
-
-      const pools = accounts
-        .map((account) => {
-          const bytes = Uint8Array.from(account.account.data as Uint8Array);
-          if (!matchesDiscriminator(bytes, poolDiscriminator)) return null;
-          const body = bytes.slice(8);
-          const totalDeposited = readU64(body, 64);
-          const totalBorrowed = readU64(body, 72);
-          const totalInterestEarned = readU64(body, 80);
-          const totalDefaults = readU64(body, 88);
-          const activeLoans = new DataView(body.buffer, body.byteOffset + 96, 4).getUint32(0, true);
-          const totalLoansIssued = new DataView(body.buffer, body.byteOffset + 100, 4).getUint32(0, true);
-          const baseRateBps = readU16(body, 112);
-          const utilization = totalDeposited > 0
-            ? Math.round((totalBorrowed / totalDeposited) * 100)
-            : 0;
-          const defaultRate = totalLoansIssued > 0
-            ? Number(((totalDefaults / totalLoansIssued) * 100).toFixed(2))
-            : 0;
-
-          return {
-            totalDeposited,
-            totalBorrowed,
-            interestEarned: totalInterestEarned,
-            activeLoans,
-            defaultRate,
-            utilization,
-            baseRateBps,
-          };
-        })
-        .filter(Boolean) as Array<{
-          totalDeposited: number;
-          totalBorrowed: number;
-          interestEarned: number;
-          activeLoans: number;
-          defaultRate: number;
-          utilization: number;
-          baseRateBps: number;
-        }>;
-
-      if (pools.length === 0) {
-        setPool({
-          totalDeposited: 0,
-          totalBorrowed: 0,
-          utilization: 0,
-          interestEarned: 0,
-          activeLoans: 0,
-          defaultRate: 0,
-          baseRateBps: 0,
-          source: 'onchain',
-        });
-        return;
-      }
-
-      const aggregated = pools.reduce((acc, poolState) => ({
-        totalDeposited: acc.totalDeposited + poolState.totalDeposited,
-        totalBorrowed: acc.totalBorrowed + poolState.totalBorrowed,
-        interestEarned: acc.interestEarned + poolState.interestEarned,
-        activeLoans: acc.activeLoans + poolState.activeLoans,
-        defaultRate: acc.defaultRate + poolState.defaultRate,
-        baseRateBps: Math.max(acc.baseRateBps, poolState.baseRateBps),
-      }), {
-        totalDeposited: 0,
-        totalBorrowed: 0,
-        interestEarned: 0,
-        activeLoans: 0,
-        defaultRate: 0,
-        baseRateBps: 0,
-      });
-
+      const [history, poolResp] = await Promise.all([
+        fetchPoolHistory(),
+        fetch(`${MCP_API_URL}/runtime/pool`),
+      ]);
+      if (!poolResp.ok) throw new Error(String(poolResp.status));
+      const payload = await poolResp.json();
+      const livePool = payload.pool;
       setPool({
-        totalDeposited: aggregated.totalDeposited,
-        totalBorrowed: aggregated.totalBorrowed,
-        utilization: aggregated.totalDeposited > 0
-          ? Math.round((aggregated.totalBorrowed / aggregated.totalDeposited) * 100)
-          : 0,
-        interestEarned: aggregated.interestEarned,
-        activeLoans: aggregated.activeLoans,
-        defaultRate: Number((aggregated.defaultRate / pools.length).toFixed(2)),
-        baseRateBps: aggregated.baseRateBps,
+        totalDeposited: livePool?.deposited ?? 0,
+        totalBorrowed: livePool?.borrowed ?? 0,
+        utilization: livePool?.utilization ?? 0,
+        interestEarned: livePool?.interestEarned ?? 0,
+        activeLoans: livePool?.activeLoans ?? 0,
+        defaultRate: livePool?.defaultRate ?? 0,
+        baseRateBps: livePool?.baseRateBps ?? 0,
+        history,
         source: 'onchain',
       });
     } catch {
@@ -152,14 +95,15 @@ export function usePoolState() {
         activeLoans: 0,
         defaultRate: 0,
         baseRateBps: 0,
+        history: [],
         source: 'onchain',
       });
     }
-  }, [connection]);
+  }, []);
 
   useEffect(() => {
     refresh();
-    const timer = window.setInterval(refresh, 20000);
+    const timer = window.setInterval(refresh, 5000);
     return () => window.clearInterval(timer);
   }, [refresh]);
 
@@ -214,6 +158,19 @@ function encodeAnchorDiscriminator(bytes: number[]) {
   return Uint8Array.from(bytes);
 }
 
+async function anchorDiscriminator(name: string) {
+  const data = new TextEncoder().encode(`global:${name}`);
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  return new Uint8Array(digest).slice(0, 8);
+}
+
+function createSplApproveData(amount: bigint) {
+  const buffer = new Uint8Array(9);
+  buffer[0] = 4;
+  new DataView(buffer.buffer).setBigUint64(1, amount, true);
+  return buffer;
+}
+
 async function deriveAta(owner: PublicKey, mint: PublicKey) {
   const [ata] = await PublicKey.findProgramAddress(
     [owner.toBuffer(), TOKEN_PROGRAM_ID.toBuffer(), mint.toBuffer()],
@@ -241,120 +198,25 @@ function escrowStatusLabel(status: Loan['status'], dueDateMs: number) {
 }
 
 export function useLoanBook() {
-  const { connection } = useConnection();
   const [loans, setLoans] = useState<Loan[]>([]);
   const [loaded, setLoaded] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
-      const [loanAccounts, scheduleAccounts, escrowAccounts, poolAccounts] = await Promise.all([
-        connection.getProgramAccounts(PROGRAM_IDS.lendingPool, {
-          commitment: 'confirmed',
-        }),
-        connection.getProgramAccounts(PROGRAM_IDS.lendingPool, {
-          commitment: 'confirmed',
-        }),
-        connection.getProgramAccounts(PROGRAM_IDS.lendingPool, {
-          commitment: 'confirmed',
-        }),
-        connection.getProgramAccounts(PROGRAM_IDS.lendingPool, {
-          commitment: 'confirmed',
-        }),
-      ]);
-
-      const schedules = new Map<number, { total: number; paid: number; amount: number }>();
-      for (const account of scheduleAccounts) {
-        const raw = account.account.data;
-        const bytes = Uint8Array.from(raw as Uint8Array);
-        if (!matchesDiscriminator(bytes, SCHEDULE_DISCRIMINATOR)) continue;
-        const body = bytes.slice(8);
-        const loanId = readU64(body, 0);
-        schedules.set(loanId, {
-          total: body[72],
-          paid: body[73],
-          amount: readU64(body, 74),
-        });
-      }
-
-      const escrows = new Map<number, { mint: string; pubkey: string }>();
-      for (const account of escrowAccounts) {
-        const bytes = Uint8Array.from(account.account.data as Uint8Array);
-        if (!matchesDiscriminator(bytes, ESCROW_DISCRIMINATOR)) continue;
-        const body = bytes.slice(8);
-        const loanId = readU64(body, 0);
-        escrows.set(loanId, {
-          mint: readPubkey(body, 40).toBase58(),
-          pubkey: account.pubkey.toBase58(),
-        });
-      }
-
-      const poolByKey = new Map<string, { interestIndex: number }>();
-      for (const account of poolAccounts) {
-        const bytes = Uint8Array.from(account.account.data as Uint8Array);
-        if (!matchesDiscriminator(bytes, Uint8Array.from([247, 237, 227, 245, 215, 195, 222, 70]))) continue;
-        const body = bytes.slice(8);
-        poolByKey.set(account.pubkey.toBase58(), {
-          interestIndex: readU128(body, 116),
-        });
-      }
-
-      const decoded = loanAccounts
-        .map((account) => {
-          const raw = account.account.data;
-          const bytes = Uint8Array.from(raw as Uint8Array);
-          if (!matchesDiscriminator(bytes, LOAN_DISCRIMINATOR)) return null;
-          const body = bytes.slice(8);
-          const id = readU64(body, 0);
-          const borrower = readPubkey(body, 40).toBase58();
-          const principal = readU64(body, 104);
-          const rateBps = readU16(body, 112);
-          const dueDateSecs = readI64(body, 122);
-          const repaid = readU64(body, 130);
-          const status = statusLabel(body[138]);
-          const escrow = readPubkey(body, 139).toBase58();
-          const pool = readPubkey(body, 8).toBase58();
-          const indexSnapshot = readU128(body, 235);
-          const schedule = schedules.get(id);
-          const escrowState = escrows.get(id);
-          const currentIndex = poolByKey.get(pool)?.interestIndex ?? indexSnapshot;
-          const interestOwed = currentIndex > indexSnapshot
-            ? Math.floor((principal * (currentIndex - indexSnapshot)) / 1_000_000_000_000_000_000)
-            : 0;
-          const outstandingEstimate = Math.max(0, principal + interestOwed - repaid);
-
-          return {
-            id,
-            borrower,
-            principal,
-            rateBps,
-            dueDate: new Date(dueDateSecs * 1000).toISOString().slice(0, 10),
-            repaid,
-            status,
-            escrowStatus: escrowStatusLabel(status, dueDateSecs * 1000),
-            paidInstallments: schedule?.paid ?? 0,
-            totalInstallments: schedule?.total ?? 0,
-            installmentAmount: schedule?.amount ?? 0,
-            accountPubkey: account.pubkey.toBase58(),
-            poolPubkey: pool,
-            escrowPubkey: escrow,
-            collateralMint: escrowState?.mint,
-            outstandingEstimate,
-          } satisfies Loan;
-        })
-        .filter(Boolean) as Loan[];
-
-      decoded.sort((a, b) => b.id - a.id);
-      setLoans(decoded);
+      const resp = await fetch(`${MCP_API_URL}/runtime/loans`);
+      if (!resp.ok) throw new Error(String(resp.status));
+      const payload = await resp.json();
+      setLoans(Array.isArray(payload.loans) ? payload.loans : []);
     } catch {
       setLoans([]);
     } finally {
       setLoaded(true);
     }
-  }, [connection]);
+  }, []);
 
   useEffect(() => {
     refresh();
-    const timer = window.setInterval(refresh, 20000);
+    const timer = window.setInterval(refresh, 5000);
     return () => window.clearInterval(timer);
   }, [refresh]);
 
@@ -568,6 +430,7 @@ export function useLoanActions() {
   const wallet = useWallet();
   const [repayingLoanId, setRepayingLoanId] = useState<number | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [startingLoan, setStartingLoan] = useState(false);
 
   const repayLoan = useCallback(async (loan: Loan) => {
     if (!wallet.publicKey || !wallet.sendTransaction) {
@@ -597,9 +460,11 @@ export function useLoanActions() {
         PROGRAM_IDS.lendingPool,
       );
       const borrowerAta = await deriveAta(wallet.publicKey, tokenMint);
+      const repayAmountUi = Math.max(0.000001, loan.outstandingEstimate ?? (loan.principal - loan.repaid));
+      const repayAmountRaw = BigInt(Math.ceil(repayAmountUi * TOKEN_DECIMALS));
       const repayData = new Uint8Array([
         ...encodeAnchorDiscriminator([234, 103, 67, 82, 208, 234, 219, 166]),
-        ...encodeAnchorU64(BigInt(Math.max(1, Math.round(loan.outstandingEstimate ?? (loan.principal - loan.repaid))))),
+        ...encodeAnchorU64(repayAmountRaw),
       ]);
 
       const repayIx = new TransactionInstruction({
@@ -619,7 +484,7 @@ export function useLoanActions() {
       const repaySig = await wallet.sendTransaction(tx, connection);
       await connection.confirmTransaction(repaySig, 'confirmed');
 
-      if (loan.outstandingEstimate && loan.outstandingEstimate > 0) {
+      if (repayAmountRaw > 0n) {
         const collateralMint = new PublicKey(loan.collateralMint);
         const borrowerCollateralAta = await deriveAta(wallet.publicKey, collateralMint);
         const loanIdBytes = encodeAnchorU64(BigInt(loan.id));
@@ -657,9 +522,165 @@ export function useLoanActions() {
     }
   }, [connection, wallet]);
 
+  const acceptOfferAndEnableAutopay = useCallback(async (
+    borrower: string,
+    request?: { amountUsd?: number; durationDays?: number },
+  ) => {
+    if (!wallet.publicKey || !wallet.sendTransaction) {
+      throw new Error('Connect the borrower wallet to start the loan from the dashboard.');
+    }
+    if (wallet.publicKey.toBase58() !== borrower) {
+      throw new Error('Connected wallet must match the scored borrower to sign collateral and autopay.');
+    }
+
+    setStartingLoan(true);
+    setActionError(null);
+
+    try {
+      const loadPrep = async () => {
+        const prepResp = await fetch(`${MCP_API_URL}/agent/lending/prepare-execution`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ borrower }),
+        });
+        const prepPayload = await prepResp.json();
+        if (!prepResp.ok || prepPayload.success === false) {
+          throw new Error(prepPayload.error || `HTTP ${prepResp.status}`);
+        }
+        return prepPayload.result;
+      };
+
+      let prep: any;
+      try {
+        prep = await loadPrep();
+      } catch (error: any) {
+        if (!String(error?.message || '').includes('No active negotiated offer')) {
+          throw error;
+        }
+
+        const evalResp = await fetch(`${MCP_API_URL}/agent/lending/evaluate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            borrower,
+            amountUsd: request?.amountUsd ?? 100,
+            durationDays: request?.durationDays ?? 14,
+          }),
+        });
+        const evalPayload = await evalResp.json();
+        if (!evalResp.ok || evalPayload.success === false) {
+          throw new Error(evalPayload.error || `HTTP ${evalResp.status}`);
+        }
+        prep = await loadPrep();
+      }
+
+      const collateralPositionResp = await fetch(`${MCP_API_URL}/mcp/call`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tool: 'get_balance',
+          params: {
+            address: borrower,
+            token_mint: prep.collateralMint,
+          },
+        }),
+      });
+      const collateralPosition = await collateralPositionResp.json();
+      const collateralRaw = BigInt(collateralPosition?.result?.rawBalance || '0');
+      const requiredCollateralRaw = BigInt(prep.collateralAmountRaw || '0');
+      if (collateralRaw < requiredCollateralRaw) {
+        const deficit = Number(requiredCollateralRaw - collateralRaw) / TOKEN_DECIMALS;
+        throw new Error(`Insufficient collateral. This wallet needs ${deficit.toFixed(6)} more XAUT on devnet before the loan can start.`);
+      }
+
+      const lamports = await connection.getBalance(wallet.publicKey, 'confirmed');
+      if (lamports < 5_000_000) {
+        throw new Error('Borrower wallet needs at least 0.005 SOL on devnet for transaction fees.');
+      }
+
+      const lockIx = new TransactionInstruction({
+        programId: new PublicKey(prep.programId),
+        keys: [
+          { pubkey: new PublicKey(prep.poolState), isSigner: false, isWritable: true },
+          { pubkey: new PublicKey(prep.escrowState), isSigner: false, isWritable: true },
+          { pubkey: new PublicKey(prep.escrowVault), isSigner: false, isWritable: true },
+          { pubkey: new PublicKey(prep.collateralMint), isSigner: false, isWritable: false },
+          { pubkey: new PublicKey(prep.borrowerCollateralAta), isSigner: false, isWritable: true },
+          { pubkey: wallet.publicKey, isSigner: true, isWritable: true },
+          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+          { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+          { pubkey: SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false },
+        ],
+        data: new Uint8Array([
+          ...(await anchorDiscriminator('lock_collateral')),
+          ...encodeAnchorU64(BigInt(prep.loanId)),
+          ...encodeAnchorU64(BigInt(prep.collateralAmountRaw)),
+        ]) as unknown as Buffer,
+      });
+
+      const lockTx = new Transaction().add(lockIx);
+      const lockSig = await wallet.sendTransaction(lockTx, connection);
+      await connection.confirmTransaction(lockSig, 'confirmed');
+
+      const executeResp = await fetch(`${MCP_API_URL}/agent/lending/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          borrower,
+          loanId: prep.loanId,
+          skipCollateral: true,
+          forceFresh: true,
+        }),
+      });
+      const executePayload = await executeResp.json();
+      if (!executeResp.ok || executePayload.success === false) {
+        throw new Error(executePayload.error || `HTTP ${executeResp.status}`);
+      }
+      if (!executePayload.result?.onChainConfirmed) {
+        throw new Error(executePayload.result?.error || 'Loan execution did not complete on-chain.');
+      }
+
+      const borrowerUsdtAta = await deriveAta(wallet.publicKey, new PublicKey(prep.usdtMint));
+      const approveIx = new TransactionInstruction({
+        programId: TOKEN_PROGRAM_ID,
+        keys: [
+          { pubkey: borrowerUsdtAta, isSigner: false, isWritable: true },
+          { pubkey: new PublicKey(prep.collectionAgentAddress), isSigner: false, isWritable: false },
+          { pubkey: wallet.publicKey, isSigner: true, isWritable: false },
+        ],
+        data: createSplApproveData(BigInt(prep.autopayAmountRaw)) as unknown as Buffer,
+      });
+
+      const approveTx = new Transaction().add(approveIx);
+      const approveSig = await wallet.sendTransaction(approveTx, connection);
+      await connection.confirmTransaction(approveSig, 'confirmed');
+
+      return {
+        loanId: prep.loanId,
+        lockCollateralTx: lockSig,
+        disburseTx: executePayload.result?.steps?.disburse?.result?.txHash || null,
+        scheduleTx: executePayload.result?.steps?.createSchedule?.result?.txHash || null,
+        autopayTx: approveSig,
+        offer: prep.offer,
+      };
+    } catch (err: any) {
+      const message =
+        err?.message ||
+        err?.error?.message ||
+        err?.cause?.message ||
+        'Loan initiation failed';
+      setActionError(message);
+      throw new Error(message);
+    } finally {
+      setStartingLoan(false);
+    }
+  }, [connection, wallet]);
+
   return {
     repayLoan,
+    acceptOfferAndEnableAutopay,
     repayingLoanId,
+    startingLoan,
     actionError,
     clearActionError: () => setActionError(null),
   };

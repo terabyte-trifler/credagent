@@ -541,3 +541,14 @@ class TestSecurity:
         thin["tx_count_90d"] = 1
         result = compute_credit_score(thin, 0.20)
         assert result["score"] < 550
+
+    def test_fresh_wallet_can_be_starter_eligible(self):
+        fresh = {name: 0 for name in FEATURE_NAMES}
+        fresh["wallet_age_days"] = 2
+        fresh["tx_count_90d"] = 1
+        fresh["avg_balance_30d_usd"] = 20
+        result = compute_credit_score(fresh, 0.95)
+        assert result["risk_tier"] == "C"
+        assert result["starter_eligible"] is True
+        assert result["lending_path"] == "starter"
+        assert result["recommended_terms"]["max_loan_usd"] == 100

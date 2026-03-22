@@ -15,6 +15,7 @@ dist
 /frontend/node_modules
 /wdk-service/node_modules
 /wdk-service/.test-tokens.env
+/wdk-service/.mcp-state/
 /ml-api/venv
 /ml-api/__pycache__/
 /ml-api/tests/__pycache__/

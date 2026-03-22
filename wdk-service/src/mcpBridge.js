@@ -26,12 +26,20 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import fs from 'node:fs';
 import * as anchor from '@coral-xyz/anchor';
-import { PublicKey, Connection } from '@solana/web3.js';
-import { Token, TOKEN_PROGRAM_ID } from '@solana/spl-token';
+import BN from 'bn.js';
+import { PublicKey, Connection, Transaction } from '@solana/web3.js';
+import { Token, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } from '@solana/spl-token';
 
 const DEFAULT_ML_API = 'http://localhost:5001';
 const DEFAULT_RATE_LIMIT = 200;
 const ML_TIMEOUT_MS = 10_000;
+const NON_THROTTLED_TOOLS = new Set([
+  'get_balance',
+  'compute_credit_score',
+  'check_eligibility',
+  'get_default_probability',
+  'get_next_loan_id',
+]);
 
 export class MCPBridge {
   #walletService;
@@ -97,7 +105,9 @@ export class MCPBridge {
       validate.toolParams(toolName, params, TOOL_MAP[toolName].inputSchema);
 
       // S3: Rate limit
-      this.#checkRate(agentId);
+      if (!NON_THROTTLED_TOOLS.has(toolName)) {
+        this.#checkRate(agentId);
+      }
 
       // S4: Dispatch
       const result = await this.#dispatch(toolName, params);
@@ -197,7 +207,9 @@ export class MCPBridge {
         return this.#submitConditionalDisburse(params);
 
       case 'create_installment_schedule':
-        return this.#submitCreateSchedule(params);
+        return params.build_only
+          ? this.#buildProgramCall('create_schedule', params)
+          : this.#submitCreateSchedule(params);
 
       case 'pull_installment':
         return this.#buildProgramCall('pull_installment', params);
@@ -323,13 +335,13 @@ export class MCPBridge {
       params.confidence,
       this.#hexToBytes32(params.model_hash),
       this.#hexToBytes32(params.zk_proof_hash),
-    ).accounts({
-      oracle_state: oracleState,
-      oracle_authority: oracleAuthority,
-      credit_score: creditScore,
+    ).accountsStrict({
+      oracleState,
+      oracleAuthority,
+      creditScore,
       borrower,
-      oracle_agent: signer.publicKey,
-      system_program: anchor.web3.SystemProgram.programId,
+      oracleAgent: signer.publicKey,
+      systemProgram: anchor.web3.SystemProgram.programId,
     }).signers([]).rpc();
 
     return {
@@ -344,6 +356,7 @@ export class MCPBridge {
   async #submitConditionalDisburse(params) {
     const signer = await this.#getAnchorWallet(params.agent_id);
     const program = this.#getProgram('lending_pool', signer);
+    const connection = program.provider.connection;
     const borrower = new PublicKey(params.borrower);
     const tokenMint = new PublicKey(this.#requireEnv('MOCK_USDT_MINT'));
     const creditOracleId = this.#getProgram('credit_score_oracle').programId;
@@ -351,35 +364,39 @@ export class MCPBridge {
     const [poolState] = PublicKey.findProgramAddressSync([Buffer.from('pool'), tokenMint.toBuffer()], program.programId);
     const [poolVault] = PublicKey.findProgramAddressSync([Buffer.from('pool_vault'), tokenMint.toBuffer()], program.programId);
     const [creditScore] = PublicKey.findProgramAddressSync([Buffer.from('credit_score'), borrower.toBuffer()], creditOracleId);
-    const loanIdBn = new anchor.BN(params.loan_id);
     const loanSeed = Buffer.alloc(8);
     loanSeed.writeBigUInt64LE(BigInt(params.loan_id));
     const [escrowState] = PublicKey.findProgramAddressSync([Buffer.from('escrow'), loanSeed], program.programId);
     const [loan] = PublicKey.findProgramAddressSync([Buffer.from('loan'), poolState.toBuffer(), loanSeed], program.programId);
-    const borrowerAta = await Token.getAssociatedTokenAddress(undefined, TOKEN_PROGRAM_ID, tokenMint, borrower);
+    const borrowerAta = await this.#ensureAssociatedTokenAccount(
+      connection,
+      signer,
+      tokenMint,
+      borrower,
+    );
     const [permState] = PublicKey.findProgramAddressSync([Buffer.from('perm_state')], agentPermId);
     const [agentIdentity] = PublicKey.findProgramAddressSync([Buffer.from('agent_id'), signer.publicKey.toBuffer()], agentPermId);
 
     const txSig = await program.methods.conditionalDisburse(
-      new anchor.BN(params.principal),
+      new BN(params.principal),
       params.interest_rate_bps,
       params.duration_days,
       this.#hexToBytes32(params.decision_hash),
-    ).accounts({
-      pool_state: poolState,
-      pool_vault: poolVault,
-      credit_score_account: creditScore,
-      escrow_state: escrowState,
+    ).accountsStrict({
+      poolState,
+      poolVault,
+      creditScoreAccount: creditScore,
+      escrowState,
       loan,
-      borrower_ata: borrowerAta,
+      borrowerAta,
       borrower,
-      lending_agent: signer.publicKey,
-      perm_state: permState,
-      agent_identity: agentIdentity,
-      credit_oracle_program: creditOracleId,
-      agent_permissions_program: agentPermId,
-      system_program: anchor.web3.SystemProgram.programId,
-      token_program: TOKEN_PROGRAM_ID,
+      lendingAgent: signer.publicKey,
+      permState,
+      agentIdentity,
+      creditOracleProgram: creditOracleId,
+      agentPermissionsProgram: agentPermId,
+      systemProgram: anchor.web3.SystemProgram.programId,
+      tokenProgram: TOKEN_PROGRAM_ID,
     }).signers([]).rpc();
 
     return {
@@ -413,20 +430,50 @@ export class MCPBridge {
     const [escrowState] = PublicKey.findProgramAddressSync([Buffer.from('escrow'), loanSeed], program.programId);
     const [escrowVault] = PublicKey.findProgramAddressSync([Buffer.from('escrow_vault'), loanSeed], program.programId);
     const borrower = new PublicKey(params.borrower);
-    const borrowerAta = await Token.getAssociatedTokenAddress(undefined, TOKEN_PROGRAM_ID, collateralMint, borrower);
+    const borrowerAta = await Token.getAssociatedTokenAddress(
+      ASSOCIATED_TOKEN_PROGRAM_ID,
+      TOKEN_PROGRAM_ID,
+      collateralMint,
+      borrower,
+    );
+
+    try {
+      const existingEscrow = await program.account.escrowVaultState.fetch(escrowState);
+      if (
+        existingEscrow.borrower?.equals?.(borrower) &&
+        existingEscrow.collateralMint?.equals?.(collateralMint) &&
+        BigInt(existingEscrow.collateralAmount?.toString?.() ?? existingEscrow.collateralAmount ?? 0) >= BigInt(params.amount)
+      ) {
+        return {
+          instruction: 'lock_collateral',
+          program: 'lending_pool',
+          submitted: true,
+          confirmed: true,
+          reused: true,
+          escrowState: escrowState.toBase58(),
+          escrowVault: escrowVault.toBase58(),
+          borrowerSigner: borrowerAgentId,
+        };
+      }
+      throw new Error('ESCROW_CONFLICT: existing escrow does not match requested borrower/mint/amount');
+    } catch (error) {
+      if (!String(error?.message || '').includes('Account does not exist')) {
+        throw error;
+      }
+    }
 
     const txSig = await program.methods.lockCollateral(
-      new anchor.BN(params.loan_id),
-      new anchor.BN(params.amount),
-    ).accounts({
-      pool_state: poolState,
-      escrow_state: escrowState,
-      escrow_vault: escrowVault,
-      collateral_mint: collateralMint,
-      borrower_ata: borrowerAta,
+      new BN(params.loan_id),
+      new BN(params.amount),
+    ).accountsStrict({
+      poolState,
+      escrowState,
+      escrowVault,
+      collateralMint,
+      borrowerAta,
       borrower,
-      system_program: anchor.web3.SystemProgram.programId,
-      token_program: TOKEN_PROGRAM_ID,
+      systemProgram: anchor.web3.SystemProgram.programId,
+      tokenProgram: TOKEN_PROGRAM_ID,
       rent: anchor.web3.SYSVAR_RENT_PUBKEY,
     }).signers([]).rpc();
 
@@ -438,6 +485,46 @@ export class MCPBridge {
       confirmed: true,
       borrowerSigner: borrowerAgentId,
     };
+  }
+
+  async #ensureAssociatedTokenAccount(connection, payerWallet, mint, owner) {
+    const ata = await Token.getAssociatedTokenAddress(
+      ASSOCIATED_TOKEN_PROGRAM_ID,
+      TOKEN_PROGRAM_ID,
+      mint,
+      owner,
+    );
+
+    const existing = await connection.getAccountInfo(ata, 'confirmed');
+    if (existing) return ata;
+
+    const ix = Token.createAssociatedTokenAccountInstruction(
+      ASSOCIATED_TOKEN_PROGRAM_ID,
+      TOKEN_PROGRAM_ID,
+      mint,
+      ata,
+      owner,
+      payerWallet.publicKey,
+    );
+    const latest = await connection.getLatestBlockhash('confirmed');
+    const tx = new Transaction().add(ix);
+    tx.feePayer = payerWallet.publicKey;
+    tx.recentBlockhash = latest.blockhash;
+
+    const signedTx = await payerWallet.signTransaction(tx);
+    try {
+      const sig = await connection.sendRawTransaction(signedTx.serialize());
+      await connection.confirmTransaction({
+        signature: sig,
+        blockhash: latest.blockhash,
+        lastValidBlockHeight: latest.lastValidBlockHeight,
+      }, 'confirmed');
+    } catch (error) {
+      const nowExists = await connection.getAccountInfo(ata, 'confirmed');
+      if (!nowExists) throw error;
+    }
+
+    return ata;
   }
 
   async #submitCreateSchedule(params) {
@@ -453,13 +540,13 @@ export class MCPBridge {
 
     const txSig = await program.methods.createSchedule(
       params.num_installments,
-      new anchor.BN(params.interval_seconds),
-    ).accounts({
+      new BN(params.interval_seconds),
+    ).accountsStrict({
       loan,
       schedule,
-      collection_agent: collectionAgent,
-      lending_agent: signer.publicKey,
-      system_program: anchor.web3.SystemProgram.programId,
+      collectionAgent,
+      lendingAgent: signer.publicKey,
+      systemProgram: anchor.web3.SystemProgram.programId,
     }).signers([]).rpc();
 
     return {
@@ -480,8 +567,8 @@ export class MCPBridge {
     loanSeed.writeBigUInt64LE(BigInt(params.loan_id));
     const [loan] = PublicKey.findProgramAddressSync([Buffer.from('loan'), poolState.toBuffer(), loanSeed], program.programId);
 
-    const txSig = await program.methods.markDefault().accounts({
-      pool_state: poolState,
+    const txSig = await program.methods.markDefault().accountsStrict({
+      poolState,
       loan,
       caller: signer.publicKey,
     }).signers([]).rpc();
@@ -531,13 +618,13 @@ export class MCPBridge {
       throw new Error('INVALID_LIQUIDATION_RECIPIENT: token mint mismatch');
     }
 
-    const txSig = await program.methods.liquidateEscrow().accounts({
+    const txSig = await program.methods.liquidateEscrow().accountsStrict({
       loan,
-      escrow_state: escrowState,
-      escrow_vault: escrowVault,
-      liquidation_recipient: liquidationRecipientPk,
+      escrowState,
+      escrowVault,
+      liquidationRecipient: liquidationRecipientPk,
       payer: signer.publicKey,
-      token_program: TOKEN_PROGRAM_ID,
+      tokenProgram: TOKEN_PROGRAM_ID,
     }).signers([]).rpc();
 
     return {
@@ -630,11 +717,33 @@ export class MCPBridge {
 
   async #getAnchorWallet(agentId) {
     const account = this.#walletService.getAccount(agentId);
-    const address = new PublicKey(this.#walletService.getAddress(agentId));
+    const keyPair = account.keyPair;
+    if (!keyPair?.privateKey || !keyPair?.publicKey) {
+      throw new Error(`AGENT_SIGNER_UNAVAILABLE: "${agentId}" does not expose a raw keypair`);
+    }
+
+    const secretKey = Uint8Array.from([
+      ...Array.from(keyPair.privateKey),
+      ...Array.from(keyPair.publicKey),
+    ]);
+    const signer = anchor.web3.Keypair.fromSecretKey(secretKey);
+
+    const signOne = async (tx) => {
+      if (typeof tx.partialSign === 'function') {
+        tx.partialSign(signer);
+        return tx;
+      }
+      if (typeof tx.sign === 'function') {
+        tx.sign([signer]);
+        return tx;
+      }
+      throw new Error('UNSUPPORTED_TX_TYPE: cannot sign transaction with agent signer');
+    };
+
     return {
-      publicKey: address,
-      signTransaction: (tx) => account.signTransaction(tx),
-      signAllTransactions: async (txs) => Promise.all(txs.map((tx) => account.signTransaction(tx))),
+      publicKey: signer.publicKey,
+      signTransaction: signOne,
+      signAllTransactions: async (txs) => Promise.all(txs.map((tx) => signOne(tx))),
     };
   }
 

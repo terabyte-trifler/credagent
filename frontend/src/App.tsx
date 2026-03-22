@@ -17,7 +17,7 @@
 
 import React, { useEffect, useState, useCallback } from 'react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
-import { AlertCircle, CheckCircle2, Clock3, ServerCog } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Clock3, Loader2, ServerCog } from 'lucide-react';
 import AgentStatus from './components/AgentStatus';
 import CreditExplorer from './components/CreditExplorer';
 import LoanManager from './components/LoanManager';
@@ -56,7 +56,7 @@ export default function App() {
   const { decisions } = useDecisionFeed();
   const { loans, loaded: loanBookLoaded } = useLoanBook();
   const { pool } = usePoolState();
-  const { repayLoan, repayingLoanId } = useLoanActions();
+  const { repayLoan, repayingLoanId, acceptOfferAndEnableAutopay, startingLoan, actionError, clearActionError } = useLoanActions();
   const { gaps } = useIntegrationGaps(services, agents, decisions, loanBookLoaded);
   const [latestCreditResult, setLatestCreditResult] = useState<CreditResult | null>(null);
   const [negotiationTerms, setNegotiationTerms] = useState<{
@@ -105,7 +105,8 @@ export default function App() {
         return;
       }
 
-      if (latestCreditResult.risk_tier_num <= 0 || latestCreditResult.recommended_terms.max_loan_usd <= 0) {
+      const starterEligible = latestCreditResult.starter_eligible || latestCreditResult.lending_path === 'starter';
+      if (latestCreditResult.recommended_terms.max_loan_usd <= 0 && !starterEligible) {
         setChatMessages(prev => [...prev, {
           role: 'agent',
           text: `This borrower is currently ${latestCreditResult.risk_tier} tier with a score of ${latestCreditResult.score}, so I cannot offer a loan. Improve credit history or add stronger collateral evidence before retrying.`,
@@ -186,12 +187,35 @@ export default function App() {
     }, 300);
   }, [buildCollateralText, latestCreditResult, negotiationStarted, negotiationTerms?.durationDays, parseNegotiationRequest]);
 
+  const handleAcceptOffer = useCallback(async () => {
+    if (!latestCreditResult) return;
+    try {
+      clearActionError();
+      const result = await acceptOfferAndEnableAutopay(latestCreditResult.address, {
+        amountUsd: negotiationTerms?.amountUsd ?? latestCreditResult.recommended_terms.max_loan_usd,
+        durationDays: negotiationTerms?.durationDays ?? latestCreditResult.recommended_terms.max_duration_days,
+      });
+      setChatMessages(prev => [...prev, {
+        role: 'agent',
+        text: `Loan started successfully. Collateral locked, funds disbursed, repayment schedule created, and autopay authorized for loan #${result.loanId}.`,
+      }]);
+    } catch (error: any) {
+      setChatMessages(prev => [...prev, {
+        role: 'agent',
+        text: `Loan initiation failed: ${error?.message || 'unknown error'}.`,
+      }]);
+    }
+  }, [acceptOfferAndEnableAutopay, clearActionError, latestCreditResult, negotiationTerms]);
+
   useEffect(() => {
     if (!latestCreditResult) return;
+    const starterEligible = latestCreditResult.starter_eligible || latestCreditResult.lending_path === 'starter';
     setChatMessages([
       {
         role: 'agent',
-        text: `Wallet scored at ${latestCreditResult.score} (${latestCreditResult.risk_tier}). Max loan $${latestCreditResult.recommended_terms.max_loan_usd.toLocaleString()}, base rate ${(latestCreditResult.recommended_terms.rate_bps / 100).toFixed(1)}%, max duration ${latestCreditResult.recommended_terms.max_duration_days} days. Tell me what amount and duration you want.`,
+        text: starterEligible
+          ? `Wallet scored at ${latestCreditResult.score} (${latestCreditResult.risk_tier}). This borrower qualifies for a starter loan path: up to $${latestCreditResult.recommended_terms.max_loan_usd.toLocaleString()}, base rate ${(latestCreditResult.recommended_terms.rate_bps / 100).toFixed(1)}%, max duration ${latestCreditResult.recommended_terms.max_duration_days} days. Tell me what amount and duration you want.`
+          : `Wallet scored at ${latestCreditResult.score} (${latestCreditResult.risk_tier}). Max loan $${latestCreditResult.recommended_terms.max_loan_usd.toLocaleString()}, base rate ${(latestCreditResult.recommended_terms.rate_bps / 100).toFixed(1)}%, max duration ${latestCreditResult.recommended_terms.max_duration_days} days. Tell me what amount and duration you want.`,
       },
     ]);
     setNegotiationTerms(null);
@@ -363,7 +387,25 @@ export default function App() {
                     Math.max(1, latestCreditResult.recommended_terms.max_loan_usd || 1),
                     latestCreditResult.recommended_terms.max_ltv_bps,
                   ),
-                } : null} />
+                } : null}
+                actions={negotiationTerms && latestCreditResult ? (
+                  <div className="rounded-xl border border-white/[0.04] bg-surface-2/40 px-3 py-3">
+                    <div className="text-[11px] text-gray-500 mb-2">
+                      Accepting will ask the borrower wallet to sign collateral lock and autopay approval. The AI agents will handle disbursement, scheduling, and later collections.
+                    </div>
+                    {actionError && (
+                      <div className="mb-2 text-[11px] text-red-400">{actionError}</div>
+                    )}
+                    <button
+                      onClick={handleAcceptOffer}
+                      disabled={startingLoan}
+                      className="w-full rounded-xl bg-cred-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-cred-700 disabled:opacity-60 disabled:cursor-wait transition-colors flex items-center justify-center gap-2"
+                    >
+                      {startingLoan ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}
+                      {startingLoan ? 'Starting loan…' : 'Accept offer and enable autopay'}
+                    </button>
+                  </div>
+                ) : null} />
             </ErrorBoundary>
           </section>
         </div>

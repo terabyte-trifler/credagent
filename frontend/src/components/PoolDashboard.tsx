@@ -1,4 +1,5 @@
 import React from 'react';
+import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { PoolState } from '../lib/constants';
 
 const METRIC_COLORS: Record<string, string> = {
@@ -20,11 +21,19 @@ function UtilBar({ pct }: { pct: number }) {
   );
 }
 
+function formatUsd(value: number) {
+  return new Intl.NumberFormat('en-US', {
+    maximumFractionDigits: value >= 1000 ? 0 : 2,
+    minimumFractionDigits: value > 0 && value < 10 ? 2 : 0,
+  }).format(value);
+}
+
 export default function PoolDashboard({ pool }: { pool: PoolState }) {
+  const history = pool.history || [];
   const metrics = [
-    { label: 'Total deposited', value: `$${pool.totalDeposited.toLocaleString()}` },
-    { label: 'Total borrowed', value: `$${pool.totalBorrowed.toLocaleString()}` },
-    { label: 'Interest earned', value: `$${pool.interestEarned.toLocaleString()}` },
+    { label: 'Total deposited', value: `$${formatUsd(pool.totalDeposited)}` },
+    { label: 'Total borrowed', value: `$${formatUsd(pool.totalBorrowed)}` },
+    { label: 'Interest earned', value: `$${formatUsd(pool.interestEarned)}` },
     { label: 'Active loans', value: String(pool.activeLoans) },
     { label: 'Base rate', value: `${(pool.baseRateBps / 100).toFixed(1)}%` },
     { label: 'Default rate', value: `${pool.defaultRate}%` },
@@ -42,7 +51,7 @@ export default function PoolDashboard({ pool }: { pool: PoolState }) {
 
       {pool.source === 'onchain' && (
         <div className="mb-4 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-[11px] text-amber-300">
-          Headline metrics are live from PoolState PDAs. Historical charting is hidden until an indexed history feed is connected, so the dashboard does not invent pool history.
+          Headline metrics are live from PoolState PDAs. Historical charting now uses MCP snapshot history collected from live pool state.
         </div>
       )}
 
@@ -50,7 +59,7 @@ export default function PoolDashboard({ pool }: { pool: PoolState }) {
       <div className="rounded-xl bg-surface-2/60 p-4 mb-4">
         <div className="flex items-end justify-between mb-1">
           <span className="text-xs text-gray-500 uppercase tracking-widest">Pool utilization</span>
-          <span className="text-2xl font-bold text-gray-100">{pool.utilization}%</span>
+          <span className="text-2xl font-bold text-gray-100">{pool.utilization.toFixed(2)}%</span>
         </div>
         <UtilBar pct={pool.utilization} />
         <div className="flex justify-between text-[10px] text-gray-600 mt-1">
@@ -71,12 +80,48 @@ export default function PoolDashboard({ pool }: { pool: PoolState }) {
         ))}
       </div>
 
-      <div className="rounded-xl border border-dashed border-white/[0.08] bg-surface-2/20 p-4">
-        <div className="text-xs text-gray-400 font-medium mb-1">Historical pool chart</div>
-        <div className="text-sm text-gray-500">
-          Waiting for indexed event history. The dashboard now hides synthetic trendlines instead of rendering invented 30-day data.
+      {history.length > 0 ? (
+        <div className="rounded-xl border border-white/[0.08] bg-surface-2/20 p-4">
+          <div className="text-xs text-gray-400 font-medium mb-3">Historical pool chart</div>
+          <div className="h-60">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={history.map((point) => ({
+                time: new Date(point.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                deposited: point.deposited,
+                borrowed: point.borrowed,
+              }))}>
+                <defs>
+                  <linearGradient id="depositedGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#14c972" stopOpacity={0.4} />
+                    <stop offset="95%" stopColor="#14c972" stopOpacity={0} />
+                  </linearGradient>
+                  <linearGradient id="borrowedGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.35} />
+                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
+                <XAxis dataKey="time" tick={{ fill: '#9ca3af', fontSize: 11 }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fill: '#9ca3af', fontSize: 11 }} axisLine={false} tickLine={false} />
+                <Tooltip
+                  contentStyle={{ background: '#101418', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12 }}
+                  labelStyle={{ color: '#e5e7eb' }}
+                  formatter={(value: number) => [`$${formatUsd(value)}`, '']}
+                />
+                <Area type="monotone" dataKey="deposited" stroke="#14c972" fill="url(#depositedGradient)" strokeWidth={2} />
+                <Area type="monotone" dataKey="borrowed" stroke="#3b82f6" fill="url(#borrowedGradient)" strokeWidth={2} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="rounded-xl border border-dashed border-white/[0.08] bg-surface-2/20 p-4">
+          <div className="text-xs text-gray-400 font-medium mb-1">Historical pool chart</div>
+          <div className="text-sm text-gray-500">
+            Waiting for enough live snapshots to render pool history.
+          </div>
+        </div>
+      )}
     </div>
   );
 }

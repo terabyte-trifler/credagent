@@ -20,6 +20,8 @@ import WalletManagerSolana from '@tetherto/wdk-wallet-solana';
 import { validate } from './validation.js';
 import { AuditLog } from './auditLog.js';
 import { generate24WordSeedPhrase } from './seedPhrase.js';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import 'dotenv/config';
 
 // ═══════════════════════════════════════════
@@ -48,6 +50,7 @@ export class WalletService {
 
   #audit;
   #config;
+  #walletStorePath;
 
   /**
    * @param {object} config
@@ -62,8 +65,10 @@ export class WalletService {
       wsUrl:            config.wsUrl            || process.env.SOLANA_WS_URL       || DEFAULT_WS,
       transferMaxFee:   Number(config.transferMaxFee || process.env.WDK_TRANSFER_MAX_FEE || DEFAULT_MAX_FEE),
       rateLimitPerHour: config.rateLimitPerHour || DEFAULT_RATE_LIMIT,
+      stateDir:         config.stateDir         || path.resolve(process.cwd(), '.mcp-state'),
     });
     this.#audit = new AuditLog();
+    this.#walletStorePath = path.join(this.#config.stateDir, 'wallets.json');
   }
 
   // ═══════════════════════════════════════
@@ -96,30 +101,16 @@ export class WalletService {
     // AUDIT[S1]: Seed stored in private field — inaccessible outside this class
     this.#seeds.set(agentId, seed);
 
-    const wdk = new WDK(seed).registerWallet('solana', WalletManagerSolana, {
-      rpcUrl:         this.#config.rpcUrl,
-      wsUrl:          this.#config.wsUrl,
-      transferMaxFee: this.#config.transferMaxFee,
-    });
+    const record = await this.#instantiateWalletRecord(agentId, seed, Date.now());
 
-    const account = await wdk.getAccount('solana', 0);
-    const address = await account.getAddress();
+    this.#agents.set(agentId, record);
 
-    // AUDIT[S5]: Validate the generated address is valid base58
-    validate.solanaAddress(address);
+    await this.#persistWallets();
 
-    this.#agents.set(agentId, Object.freeze({
-      wdk,
-      account,
-      address,
-      chain: 'solana',
-      createdAt: Date.now(),
-    }));
-
-    this.#audit.log('createWallet', agentId, { chain: 'solana' }, address, performance.now() - t0);
+    this.#audit.log('createWallet', agentId, { chain: 'solana' }, record.address, performance.now() - t0);
 
     // AUDIT[S2]: Return address only — seed and keys never exposed
-    return { agentId, address, chain: 'solana' };
+    return { agentId, address: record.address, chain: 'solana' };
   }
 
   // ═══════════════════════════════════════
@@ -133,7 +124,6 @@ export class WalletService {
    */
   async getSolBalance(agentId) {
     validate.agentId(agentId);
-    this.#checkRate(agentId);
     const agent = this.#requireAgent(agentId);
     const t0 = performance.now();
 
@@ -158,7 +148,6 @@ export class WalletService {
   async getTokenBalance(agentId, tokenMint) {
     validate.agentId(agentId);
     validate.solanaAddress(tokenMint);
-    this.#checkRate(agentId);
     const agent = this.#requireAgent(agentId);
     const t0 = performance.now();
 
@@ -429,6 +418,32 @@ export class WalletService {
     return this.#config.rpcUrl;
   }
 
+  async restorePersistedWallets() {
+    let raw;
+    try {
+      raw = await readFile(this.#walletStorePath, 'utf8');
+    } catch {
+      return [];
+    }
+
+    const parsed = JSON.parse(raw);
+    const wallets = Array.isArray(parsed?.wallets) ? parsed.wallets : [];
+    const restored = [];
+
+    for (const entry of wallets) {
+      if (!entry?.agentId || !entry?.seed) continue;
+      if (this.#agents.has(entry.agentId)) continue;
+
+      validate.agentId(entry.agentId);
+      const record = await this.#instantiateWalletRecord(entry.agentId, entry.seed, entry.createdAt || Date.now());
+      this.#agents.set(entry.agentId, record);
+      this.#seeds.set(entry.agentId, entry.seed);
+      restored.push({ agentId: entry.agentId, address: record.address });
+    }
+
+    return restored;
+  }
+
   // ═══════════════════════════════════════
   // Private
   // ═══════════════════════════════════════
@@ -461,6 +476,36 @@ export class WalletService {
     }
 
     return payload.result;
+  }
+
+  async #instantiateWalletRecord(agentId, seed, createdAt = Date.now()) {
+    const wdk = new WDK(seed).registerWallet('solana', WalletManagerSolana, {
+      rpcUrl:         this.#config.rpcUrl,
+      wsUrl:          this.#config.wsUrl,
+      transferMaxFee: this.#config.transferMaxFee,
+    });
+
+    const account = await wdk.getAccount('solana', 0);
+    const address = await account.getAddress();
+    validate.solanaAddress(address);
+
+    return Object.freeze({
+      wdk,
+      account,
+      address,
+      chain: 'solana',
+      createdAt,
+    });
+  }
+
+  async #persistWallets() {
+    await mkdir(this.#config.stateDir, { recursive: true });
+    const wallets = Array.from(this.#seeds.entries()).map(([agentId, seed]) => ({
+      agentId,
+      seed,
+      createdAt: this.#agents.get(agentId)?.createdAt || Date.now(),
+    }));
+    await writeFile(this.#walletStorePath, JSON.stringify({ wallets }, null, 2), 'utf8');
   }
 
   /** AUDIT[S8]: Sliding window rate limiter per agent. */

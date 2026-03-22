@@ -21,6 +21,8 @@ export interface AgentInfo {
 export interface CreditResult {
   address: string; score: number; risk_tier: string; risk_tier_num: number;
   confidence: number; default_probability: number; model_hash: string;
+  starter_eligible?: boolean;
+  lending_path?: 'standard' | 'starter';
   zk_proof_hash?: string;
   zk_proof_status?: 'stub' | 'verified' | 'missing';
   zk_proof_scheme?: string;
@@ -56,6 +58,13 @@ export interface PoolState {
   totalDeposited: number; totalBorrowed: number; utilization: number;
   interestEarned: number; activeLoans: number; defaultRate: number;
   baseRateBps: number;
+  history?: Array<{
+    timestamp: string;
+    deposited: number;
+    borrowed: number;
+    utilization: number;
+    interestEarned: number;
+  }>;
   source?: 'demo' | 'onchain';
 }
 

@@ -19,6 +19,7 @@ const MAX_NEGOTIATION_ROUNDS = 3;
 const MAX_RATE_REDUCTION_BPS = 100;
 const MAX_DURATION_EXTENSION_DAYS = 30;
 const INSTALLMENT_INTERVAL_SECS = 864_000;
+const DEFAULT_XAUT_PRICE_USD = 2300;
 
 const TIER_CONSTRAINTS = {
   4: { maxLoanUsd: 10000, maxLtvBps: 8000, baseRateBps: 400,  maxDuration: 365 },
@@ -27,6 +28,23 @@ const TIER_CONSTRAINTS = {
   1: { maxLoanUsd: 500,   maxLtvBps: 2500, baseRateBps: 1500, maxDuration: 60  },
   0: { maxLoanUsd: 0,     maxLtvBps: 0,    baseRateBps: 0,    maxDuration: 0   },
 };
+
+function buildConstraintsFromScore(score) {
+  if (score?.starter_eligible && score?.recommended_terms?.max_loan_usd > 0) {
+    return {
+      maxLoanUsd: score.recommended_terms.max_loan_usd,
+      maxLtvBps: score.recommended_terms.max_ltv_bps,
+      baseRateBps: score.recommended_terms.rate_bps,
+      maxDuration: score.recommended_terms.max_duration_days,
+      lendingPath: 'starter',
+    };
+  }
+
+  return {
+    ...(TIER_CONSTRAINTS[score?.risk_tier_num] || TIER_CONSTRAINTS[0]),
+    lendingPath: 'standard',
+  };
+}
 
 export class LendingDecisionAgent {
   #mcpBridge;
@@ -53,9 +71,11 @@ export class LendingDecisionAgent {
 
     const score = scoreResult.result;
     const tierNum = score.risk_tier_num;
-    const constraints = TIER_CONSTRAINTS[tierNum];
+    const constraints = buildConstraintsFromScore(score);
 
-    if (tierNum === 0) return this.#deny(borrowerAddress, 'DENIED_C_TIER', `Score ${score.score} (C tier)`, t0);
+    if (tierNum === 0 && !score.starter_eligible) {
+      return this.#deny(borrowerAddress, 'DENIED_C_TIER', `Score ${score.score} (C tier)`, t0);
+    }
 
     const approvedAmount = Math.min(requestedAmount, constraints.maxLoanUsd);
     if (approvedAmount <= 0) return this.#deny(borrowerAddress, 'DENIED_ZERO_AMOUNT', 'Amount zero after tier cap', t0);
@@ -79,13 +99,20 @@ export class LendingDecisionAgent {
     };
 
     this.#activeSessions.set(borrowerAddress, {
-      borrower: borrowerAddress, score: score.score, tier: score.risk_tier, tierNum,
+      borrower: borrowerAddress,
+      score: score.score,
+      tier: constraints.lendingPath === 'starter' ? 'STARTER' : score.risk_tier,
+      tierNum,
       constraints, pd, round: 0, initialOffer: { ...offer }, currentOffer: { ...offer },
-      history: [], status: 'OFFERED',
+      history: [], status: 'OFFERED', lendingPath: constraints.lendingPath,
     });
 
     return {
-      status: 'OFFERED', borrower: borrowerAddress, score: score.score, tier: score.risk_tier,
+      status: constraints.lendingPath === 'starter' ? 'STARTER_OFFERED' : 'OFFERED',
+      borrower: borrowerAddress,
+      score: score.score,
+      tier: constraints.lendingPath === 'starter' ? 'STARTER' : score.risk_tier,
+      lendingPath: constraints.lendingPath,
       defaultProbability: pd, offer, maxNegotiationRounds: MAX_NEGOTIATION_ROUNDS,
       durationMs: performance.now() - t0,
     };
@@ -167,7 +194,7 @@ export class LendingDecisionAgent {
   // FIX [P2 #6]: loan_id reserved via MCP; reasoning hashed before MCP
   // ═══════════════════════════════════════
 
-  async executeLoan(borrowerAddress) {
+  async executeLoan(borrowerAddress, options = {}) {
     const session = this.#activeSessions.get(borrowerAddress);
     if (!session) throw new Error('No active session');
     if (!['COUNTER', 'FINAL', 'OFFERED'].includes(session.status))
@@ -176,6 +203,8 @@ export class LendingDecisionAgent {
     const offer = session.currentOffer;
     const t0 = performance.now();
     const steps = { lockCollateral: null, disburse: null, createSchedule: null };
+    let schedulePrecheck = null;
+    const skipCollateral = Boolean(options.skipCollateral);
 
     // Build reasoning and hash it BEFORE any MCP call [FIX P2 #6]
     const reasoning = this.#buildDecisionReasoning(session);
@@ -187,37 +216,57 @@ export class LendingDecisionAgent {
       }
 
       // ═══ Reserve authoritative loan_id via MCP [FIX P2 #6] ═══
-      const loanIdResult = await this.#mcpBridge.executeTool('get_next_loan_id', {
-        agent_id: 'lending-agent',
-      });
-      if (!loanIdResult.success || !Number.isInteger(loanIdResult.result?.loan_id)) {
-        throw new Error(`LOAN_ID_FAILED: ${loanIdResult.error || 'No loan_id returned'}`);
+      let loanId = Number.isInteger(options.loanId) ? Number(options.loanId) : null;
+      if (loanId === null) {
+        const loanIdResult = await this.#mcpBridge.executeTool('get_next_loan_id', {
+          agent_id: 'lending-agent',
+        });
+        if (!loanIdResult.success || !Number.isInteger(loanIdResult.result?.loan_id)) {
+          throw new Error(`LOAN_ID_FAILED: ${loanIdResult.error || 'No loan_id returned'}`);
+        }
+        loanId = loanIdResult.result.loan_id;
       }
-      const loanId = loanIdResult.result.loan_id;
 
       // ═══ PRECHECK: Build installment schedule first [FIX P1 #2] ═══
       // This tool path only builds/validates instruction data, so failing here
       // safely blocks execution before escrow/disbursement are attempted.
-      steps.createSchedule = await this.#mcpBridge.executeTool('create_installment_schedule', {
+      schedulePrecheck = await this.#mcpBridge.executeTool('create_installment_schedule', {
         agent_id: 'lending-agent',
         loan_id: loanId,
         num_installments: offer.numInstallments,
         interval_seconds: INSTALLMENT_INTERVAL_SECS,
         collection_agent_address: this.#collectionAgentAddress,
+        build_only: true,
       });
-      if (!steps.createSchedule.success) {
-        throw new Error(`SCHEDULE_PRECHECK_FAILED: ${steps.createSchedule.error}`);
+      if (!schedulePrecheck.success) {
+        throw new Error(`SCHEDULE_PRECHECK_FAILED: ${schedulePrecheck.error}`);
       }
 
+      const collateralMint = process.env.MOCK_XAUT_MINT || '11111111111111111111111111111111';
+
       // ═══ STEP 1: Lock Collateral ═══
-      steps.lockCollateral = await this.#mcpBridge.executeTool('lock_collateral', {
-        agent_id: 'lending-agent',
-        loan_id: loanId,
-        borrower: borrowerAddress,
-        collateral_mint: process.env.MOCK_XAUT_MINT || '11111111111111111111111111111111',
-        amount: String(Math.ceil(offer.collateralUsd * 1_000_000)),
-      });
-      if (!steps.lockCollateral.success) throw new Error(`ESCROW_FAILED: ${steps.lockCollateral.error}`);
+      if (skipCollateral) {
+        steps.lockCollateral = {
+          success: true,
+          result: {
+            instruction: 'lock_collateral',
+            submitted: true,
+            confirmed: true,
+            reused: true,
+            external: true,
+            args: { loan_id: loanId },
+          },
+        };
+      } else {
+        steps.lockCollateral = await this.#mcpBridge.executeTool('lock_collateral', {
+          agent_id: 'lending-agent',
+          loan_id: loanId,
+          borrower: borrowerAddress,
+          collateral_mint: collateralMint,
+          amount: String(this.#collateralTokenAmount(offer.collateralUsd, collateralMint)),
+        });
+        if (!steps.lockCollateral.success) throw new Error(`ESCROW_FAILED: ${steps.lockCollateral.error}`);
+      }
 
       // ═══ STEP 2: Conditional Disburse ═══
       // AUDIT [P2 #6]: Only the hash is sent, never the raw reasoning text
@@ -232,11 +281,21 @@ export class LendingDecisionAgent {
       });
       if (!steps.disburse.success) throw new Error(`DISBURSE_FAILED: ${steps.disburse.error}`);
 
+      // ═══ STEP 3: Create actual installment schedule after loan exists ═══
+      steps.createSchedule = await this.#mcpBridge.executeTool('create_installment_schedule', {
+        agent_id: 'lending-agent',
+        loan_id: loanId,
+        num_installments: offer.numInstallments,
+        interval_seconds: INSTALLMENT_INTERVAL_SECS,
+        collection_agent_address: this.#collectionAgentAddress,
+      });
+      if (!steps.createSchedule.success) throw new Error(`SCHEDULE_FAILED: ${steps.createSchedule.error}`);
+
     } catch (error) {
       const decision = {
         status: 'EXECUTION_FAILED',
         borrower: borrowerAddress, score: session.score, tier: session.tier,
-        offer, steps, error: error.message, reasoning, reasoningHash,
+        offer, steps, schedulePrecheck, error: error.message, reasoning, reasoningHash,
         durationMs: performance.now() - t0,
       };
       this.#decisions.push(decision);
@@ -244,8 +303,14 @@ export class LendingDecisionAgent {
       return decision;
     }
 
+    const collateralSatisfied =
+      Boolean(
+        steps.lockCollateral?.result?.txHash ||
+        steps.lockCollateral?.result?.tx_hash ||
+        steps.lockCollateral?.result?.reused,
+      );
     const hasSubmission =
-      Boolean(steps.lockCollateral?.result?.txHash || steps.lockCollateral?.result?.tx_hash) &&
+      collateralSatisfied &&
       Boolean(steps.disburse?.result?.txHash || steps.disburse?.result?.tx_hash) &&
       Boolean(steps.createSchedule?.result?.txHash || steps.createSchedule?.result?.tx_hash);
 
@@ -307,6 +372,17 @@ export class LendingDecisionAgent {
   async #hashReasoning(text) {
     const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
     return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  #collateralTokenAmount(collateralUsd, collateralMint) {
+    const xautMint = process.env.MOCK_XAUT_MINT;
+    const xautPrice = Number(process.env.MOCK_XAUT_PRICE_USD || DEFAULT_XAUT_PRICE_USD);
+
+    if (xautMint && collateralMint === xautMint) {
+      return Math.max(1, Math.ceil((collateralUsd / xautPrice) * 1_000_000));
+    }
+
+    return Math.max(1, Math.ceil(collateralUsd * 1_000_000));
   }
 
   #deny(addr, status, reason, t0) {
