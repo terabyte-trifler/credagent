@@ -1,0 +1,2319 @@
+{
+  "address": "8tTaDNjoukk18eAZmxBrB9bo35i4yAAKTpQ3MqZiAoid",
+  "metadata": {
+    "name": "lending_pool",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Autonomous lending with escrow, conditional disbursement, installments, interest streaming"
+  },
+  "instructions": [
+    {
+      "name": "accrue_interest",
+      "docs": [
+        "PRIMITIVE 5: Accrue per-epoch streaming interest"
+      ],
+      "discriminator": [
+        47,
+        40,
+        115,
+        198,
+        91,
+        12,
+        222,
+        49
+      ],
+      "accounts": [
+        {
+          "name": "pool_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool_state.token_mint",
+                "account": "PoolState"
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "conditional_disburse",
+      "docs": [
+        "PRIMITIVE 2: Atomic 4-gate conditional disbursement"
+      ],
+      "discriminator": [
+        182,
+        9,
+        183,
+        41,
+        97,
+        170,
+        105,
+        253
+      ],
+      "accounts": [
+        {
+          "name": "pool_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool_state.token_mint",
+                "account": "PoolState"
+              }
+            ]
+          }
+        },
+        {
+          "name": "pool_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool_state.token_mint",
+                "account": "PoolState"
+              }
+            ]
+          }
+        },
+        {
+          "name": "credit_score_account",
+          "docs": [
+            "The credit score PDA for the borrower (GATE 1)",
+            "because this is a cross-program account (credit_score_oracle).",
+            "In production, use CPI or IDL import for type safety."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  114,
+                  101,
+                  100,
+                  105,
+                  116,
+                  95,
+                  115,
+                  99,
+                  111,
+                  114,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "borrower"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "credit_oracle_program"
+            }
+          }
+        },
+        {
+          "name": "escrow_state",
+          "docs": [
+            "The escrow state PDA for this loan (GATE 2)"
+          ],
+          "writable": true
+        },
+        {
+          "name": "loan",
+          "docs": [
+            "Loan account to be created"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  111,
+                  97,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool_state"
+              },
+              {
+                "kind": "account",
+                "path": "pool_state.next_loan_id",
+                "account": "PoolState"
+              }
+            ]
+          }
+        },
+        {
+          "name": "borrower_ata",
+          "writable": true
+        },
+        {
+          "name": "borrower"
+        },
+        {
+          "name": "lending_agent",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "perm_state",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  101,
+                  114,
+                  109,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "agent_permissions_program"
+            }
+          }
+        },
+        {
+          "name": "agent_identity",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  95,
+                  105,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "lending_agent"
+              }
+            ],
+            "program": {
+              "kind": "account",
+              "path": "agent_permissions_program"
+            }
+          }
+        },
+        {
+          "name": "credit_oracle_program"
+        },
+        {
+          "name": "agent_permissions_program",
+          "address": "57uCTUNFStnMEkGLQT869Qdo5fo9EAqPsp5dn5QWQUqG"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "principal",
+          "type": "u64"
+        },
+        {
+          "name": "interest_rate_bps",
+          "type": "u16"
+        },
+        {
+          "name": "duration_days",
+          "type": "u16"
+        },
+        {
+          "name": "decision_hash",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "create_schedule",
+      "docs": [
+        "PRIMITIVE 3: Create installment repayment schedule"
+      ],
+      "discriminator": [
+        200,
+        176,
+        213,
+        214,
+        210,
+        121,
+        35,
+        225
+      ],
+      "accounts": [
+        {
+          "name": "loan",
+          "writable": true
+        },
+        {
+          "name": "schedule",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  99,
+                  104,
+                  101,
+                  100,
+                  117,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "loan.loan_id",
+                "account": "Loan"
+              }
+            ]
+          }
+        },
+        {
+          "name": "collection_agent"
+        },
+        {
+          "name": "lending_agent",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "num_installments",
+          "type": "u8"
+        },
+        {
+          "name": "interval_secs",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "deposit",
+      "discriminator": [
+        242,
+        35,
+        198,
+        137,
+        82,
+        225,
+        242,
+        182
+      ],
+      "accounts": [
+        {
+          "name": "pool_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool_state.token_mint",
+                "account": "PoolState"
+              }
+            ]
+          }
+        },
+        {
+          "name": "pool_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool_state.token_mint",
+                "account": "PoolState"
+              }
+            ]
+          }
+        },
+        {
+          "name": "depositor_ata",
+          "writable": true
+        },
+        {
+          "name": "depositor",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "initialize_pool",
+      "discriminator": [
+        95,
+        180,
+        10,
+        172,
+        84,
+        174,
+        232,
+        40
+      ],
+      "accounts": [
+        {
+          "name": "pool_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "token_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "pool_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "token_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_mint"
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "rent",
+          "address": "SysvarRent111111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "base_rate_bps",
+          "type": "u16"
+        }
+      ]
+    },
+    {
+      "name": "liquidate_escrow",
+      "docs": [
+        "PRIMITIVE 7: Liquidate escrow collateral (loan defaulted)"
+      ],
+      "discriminator": [
+        211,
+        222,
+        49,
+        49,
+        195,
+        31,
+        152,
+        211
+      ],
+      "accounts": [
+        {
+          "name": "loan"
+        },
+        {
+          "name": "escrow_state",
+          "writable": true
+        },
+        {
+          "name": "escrow_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "escrow_state.loan_id",
+                "account": "EscrowVaultState"
+              }
+            ]
+          }
+        },
+        {
+          "name": "liquidation_recipient",
+          "docs": [
+            "Pool vault to receive liquidated collateral.",
+            "NOTE: If collateral mint differs from pool mint, a swap step is needed.",
+            "For MVP, we assume same-mint collateral or a separate liquidation vault."
+          ],
+          "writable": true
+        },
+        {
+          "name": "payer",
+          "docs": [
+            "Anyone can trigger (permissionless once loan is defaulted)"
+          ],
+          "signer": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "lock_collateral",
+      "docs": [
+        "PRIMITIVE 1: Lock collateral in escrow PDA"
+      ],
+      "discriminator": [
+        161,
+        216,
+        135,
+        122,
+        12,
+        104,
+        211,
+        101
+      ],
+      "accounts": [
+        {
+          "name": "pool_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool_state.token_mint",
+                "account": "PoolState"
+              }
+            ]
+          }
+        },
+        {
+          "name": "escrow_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "loan_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "escrow_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "loan_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "collateral_mint"
+        },
+        {
+          "name": "borrower_ata",
+          "writable": true
+        },
+        {
+          "name": "borrower",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "rent",
+          "address": "SysvarRent111111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "loan_id",
+          "type": "u64"
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "mark_default",
+      "discriminator": [
+        182,
+        231,
+        123,
+        132,
+        66,
+        208,
+        137,
+        139
+      ],
+      "accounts": [
+        {
+          "name": "pool_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool_state.token_mint",
+                "account": "PoolState"
+              }
+            ]
+          }
+        },
+        {
+          "name": "loan",
+          "writable": true
+        },
+        {
+          "name": "caller",
+          "docs": [
+            "Collection agent or anyone (after grace period, permissionless)"
+          ],
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "pull_installment",
+      "docs": [
+        "PRIMITIVE 4: Collection agent pulls scheduled installment"
+      ],
+      "discriminator": [
+        2,
+        134,
+        89,
+        247,
+        34,
+        73,
+        74,
+        204
+      ],
+      "accounts": [
+        {
+          "name": "schedule",
+          "writable": true
+        },
+        {
+          "name": "loan",
+          "writable": true
+        },
+        {
+          "name": "pool_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool_state.token_mint",
+                "account": "PoolState"
+              }
+            ]
+          }
+        },
+        {
+          "name": "pool_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool_state.token_mint",
+                "account": "PoolState"
+              }
+            ]
+          }
+        },
+        {
+          "name": "borrower_ata",
+          "docs": [
+            "Borrower's token account (must have delegated authority to collection_agent)"
+          ],
+          "writable": true
+        },
+        {
+          "name": "collection_agent",
+          "docs": [
+            "Collection agent authorized to pull installments"
+          ],
+          "signer": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "release_collateral",
+      "docs": [
+        "PRIMITIVE 6: Release collateral back to borrower (loan fully repaid)"
+      ],
+      "discriminator": [
+        40,
+        255,
+        12,
+        218,
+        249,
+        197,
+        179,
+        160
+      ],
+      "accounts": [
+        {
+          "name": "loan"
+        },
+        {
+          "name": "escrow_state",
+          "writable": true
+        },
+        {
+          "name": "escrow_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "escrow_state.loan_id",
+                "account": "EscrowVaultState"
+              }
+            ]
+          }
+        },
+        {
+          "name": "borrower_ata",
+          "writable": true
+        },
+        {
+          "name": "borrower"
+        },
+        {
+          "name": "payer",
+          "docs": [
+            "Anyone can trigger release (permissionless once conditions met)"
+          ],
+          "signer": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "repay",
+      "discriminator": [
+        234,
+        103,
+        67,
+        82,
+        208,
+        234,
+        219,
+        166
+      ],
+      "accounts": [
+        {
+          "name": "pool_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool_state.token_mint",
+                "account": "PoolState"
+              }
+            ]
+          }
+        },
+        {
+          "name": "pool_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool_state.token_mint",
+                "account": "PoolState"
+              }
+            ]
+          }
+        },
+        {
+          "name": "loan",
+          "writable": true
+        },
+        {
+          "name": "borrower_ata",
+          "writable": true
+        },
+        {
+          "name": "borrower",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "set_next_loan_id",
+      "discriminator": [
+        14,
+        93,
+        228,
+        154,
+        36,
+        188,
+        123,
+        64
+      ],
+      "accounts": [
+        {
+          "name": "pool_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool_state.token_mint",
+                "account": "PoolState"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "pool_state"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "new_next_loan_id",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "withdraw",
+      "discriminator": [
+        183,
+        18,
+        70,
+        156,
+        148,
+        109,
+        161,
+        34
+      ],
+      "accounts": [
+        {
+          "name": "pool_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool_state.token_mint",
+                "account": "PoolState"
+              }
+            ]
+          }
+        },
+        {
+          "name": "pool_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool_state.token_mint",
+                "account": "PoolState"
+              }
+            ]
+          }
+        },
+        {
+          "name": "recipient_ata",
+          "writable": true
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "pool_state"
+          ]
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "AgentIdentity",
+      "discriminator": [
+        11,
+        149,
+        31,
+        27,
+        186,
+        76,
+        241,
+        72
+      ]
+    },
+    {
+      "name": "EscrowVaultState",
+      "discriminator": [
+        192,
+        99,
+        212,
+        219,
+        136,
+        109,
+        242,
+        184
+      ]
+    },
+    {
+      "name": "InstallmentSchedule",
+      "discriminator": [
+        98,
+        13,
+        81,
+        29,
+        86,
+        156,
+        104,
+        172
+      ]
+    },
+    {
+      "name": "Loan",
+      "discriminator": [
+        20,
+        195,
+        70,
+        117,
+        165,
+        227,
+        182,
+        1
+      ]
+    },
+    {
+      "name": "PermState",
+      "discriminator": [
+        210,
+        170,
+        247,
+        224,
+        90,
+        208,
+        205,
+        235
+      ]
+    },
+    {
+      "name": "PoolState",
+      "discriminator": [
+        247,
+        237,
+        227,
+        245,
+        215,
+        195,
+        222,
+        70
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "CollateralLiquidated",
+      "discriminator": [
+        148,
+        42,
+        28,
+        104,
+        72,
+        50,
+        124,
+        98
+      ]
+    },
+    {
+      "name": "CollateralLocked",
+      "discriminator": [
+        185,
+        146,
+        119,
+        8,
+        41,
+        179,
+        88,
+        96
+      ]
+    },
+    {
+      "name": "CollateralReleased",
+      "discriminator": [
+        126,
+        144,
+        66,
+        166,
+        31,
+        103,
+        26,
+        113
+      ]
+    },
+    {
+      "name": "Deposited",
+      "discriminator": [
+        111,
+        141,
+        26,
+        45,
+        161,
+        35,
+        100,
+        57
+      ]
+    },
+    {
+      "name": "InstallmentPulled",
+      "discriminator": [
+        4,
+        153,
+        175,
+        10,
+        220,
+        15,
+        177,
+        151
+      ]
+    },
+    {
+      "name": "InterestAccrued",
+      "discriminator": [
+        79,
+        218,
+        196,
+        73,
+        32,
+        148,
+        138,
+        71
+      ]
+    },
+    {
+      "name": "LoanDefaulted",
+      "discriminator": [
+        194,
+        98,
+        51,
+        88,
+        228,
+        118,
+        173,
+        46
+      ]
+    },
+    {
+      "name": "LoanDisbursed",
+      "discriminator": [
+        223,
+        190,
+        120,
+        135,
+        68,
+        98,
+        8,
+        248
+      ]
+    },
+    {
+      "name": "LoanFullyRepaid",
+      "discriminator": [
+        211,
+        241,
+        199,
+        87,
+        36,
+        217,
+        123,
+        186
+      ]
+    },
+    {
+      "name": "LoanRepaid",
+      "discriminator": [
+        202,
+        183,
+        88,
+        60,
+        211,
+        54,
+        142,
+        243
+      ]
+    },
+    {
+      "name": "PoolInitialized",
+      "discriminator": [
+        100,
+        118,
+        173,
+        87,
+        12,
+        198,
+        254,
+        229
+      ]
+    },
+    {
+      "name": "ScheduleCreated",
+      "discriminator": [
+        168,
+        45,
+        65,
+        87,
+        253,
+        212,
+        125,
+        178
+      ]
+    },
+    {
+      "name": "Withdrawn",
+      "discriminator": [
+        20,
+        89,
+        223,
+        198,
+        194,
+        124,
+        219,
+        13
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "ZeroAmount",
+      "msg": "Amount must be > 0"
+    },
+    {
+      "code": 6001,
+      "name": "Paused",
+      "msg": "Pool is paused"
+    },
+    {
+      "code": 6002,
+      "name": "Overflow",
+      "msg": "Arithmetic overflow"
+    },
+    {
+      "code": 6003,
+      "name": "MintMismatch",
+      "msg": "Token mint mismatch"
+    },
+    {
+      "code": 6004,
+      "name": "UtilizationExceeded",
+      "msg": "Pool utilization would exceed maximum"
+    },
+    {
+      "code": 6005,
+      "name": "InvalidScore",
+      "msg": "Credit score expired or invalid"
+    },
+    {
+      "code": 6006,
+      "name": "ScoreTooLow",
+      "msg": "Credit score too low for lending"
+    },
+    {
+      "code": 6007,
+      "name": "InsufficientCollateral",
+      "msg": "Insufficient collateral for risk tier"
+    },
+    {
+      "code": 6008,
+      "name": "NotActive",
+      "msg": "Loan not in active status"
+    },
+    {
+      "code": 6009,
+      "name": "GracePeriodActive",
+      "msg": "Grace period not yet expired"
+    },
+    {
+      "code": 6010,
+      "name": "NotDue",
+      "msg": "Installment not yet due"
+    },
+    {
+      "code": 6011,
+      "name": "ScheduleComplete",
+      "msg": "All installments already paid"
+    },
+    {
+      "code": 6012,
+      "name": "EscrowNotLocked",
+      "msg": "Escrow not in locked status"
+    },
+    {
+      "code": 6013,
+      "name": "EscrowFinalized",
+      "msg": "Escrow already released or liquidated"
+    },
+    {
+      "code": 6014,
+      "name": "DurationExceeded",
+      "msg": "Loan duration exceeds maximum"
+    },
+    {
+      "code": 6015,
+      "name": "RateExceeded",
+      "msg": "Interest rate exceeds maximum"
+    },
+    {
+      "code": 6016,
+      "name": "TooManyInstallments",
+      "msg": "Installment count exceeds maximum"
+    },
+    {
+      "code": 6017,
+      "name": "InsufficientLiquidity",
+      "msg": "Insufficient pool liquidity"
+    },
+    {
+      "code": 6018,
+      "name": "OverRepayment",
+      "msg": "Repayment exceeds total owed"
+    },
+    {
+      "code": 6019,
+      "name": "NotCollectionAgent",
+      "msg": "Only collection agent can pull installments"
+    },
+    {
+      "code": 6020,
+      "name": "LoanNotFullyRepaid",
+      "msg": "Loan still has outstanding repayments"
+    },
+    {
+      "code": 6021,
+      "name": "ScheduleStillActive",
+      "msg": "Schedule must be inactive or complete to release"
+    },
+    {
+      "code": 6022,
+      "name": "LoanIdMismatch",
+      "msg": "Loan id does not match pool next_loan_id"
+    },
+    {
+      "code": 6023,
+      "name": "UnauthorizedAgent",
+      "msg": "Agent is not authorized for this operation"
+    }
+  ],
+  "types": [
+    {
+      "name": "AgentIdentity",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "wallet",
+            "type": "pubkey"
+          },
+          {
+            "name": "role",
+            "type": {
+              "defined": {
+                "name": "AgentRole"
+              }
+            }
+          },
+          {
+            "name": "tier",
+            "type": {
+              "defined": {
+                "name": "PermissionTier"
+              }
+            }
+          },
+          {
+            "name": "daily_limit",
+            "type": "u64"
+          },
+          {
+            "name": "daily_spent",
+            "type": "u64"
+          },
+          {
+            "name": "limit_reset_epoch",
+            "type": "i64"
+          },
+          {
+            "name": "is_active",
+            "type": "bool"
+          },
+          {
+            "name": "registered_at",
+            "type": "i64"
+          },
+          {
+            "name": "total_operations",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AgentRole",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Oracle"
+          },
+          {
+            "name": "Lending"
+          },
+          {
+            "name": "Collection"
+          },
+          {
+            "name": "Yield"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CollateralLiquidated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "loan_id",
+            "type": "u64"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CollateralLocked",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "loan_id",
+            "type": "u64"
+          },
+          {
+            "name": "borrower",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CollateralReleased",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "loan_id",
+            "type": "u64"
+          },
+          {
+            "name": "borrower",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Deposited",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "depositor",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "total_deposited",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "EscrowStatus",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Locked"
+          },
+          {
+            "name": "Released"
+          },
+          {
+            "name": "Liquidated"
+          }
+        ]
+      }
+    },
+    {
+      "name": "EscrowVaultState",
+      "docs": [
+        "Escrow vault metadata. Actual tokens held in associated token PDA.",
+        "PDA: [ESCROW_SEED, loan_id.to_le_bytes()]"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "loan_id",
+            "type": "u64"
+          },
+          {
+            "name": "borrower",
+            "type": "pubkey"
+          },
+          {
+            "name": "collateral_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "collateral_amount",
+            "type": "u64"
+          },
+          {
+            "name": "status",
+            "type": {
+              "defined": {
+                "name": "EscrowStatus"
+              }
+            }
+          },
+          {
+            "name": "locked_at",
+            "type": "i64"
+          },
+          {
+            "name": "released_at",
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "vault_bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "InstallmentPulled",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "loan_id",
+            "type": "u64"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "paid",
+            "type": "u8"
+          },
+          {
+            "name": "remaining",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "InstallmentSchedule",
+      "docs": [
+        "Installment schedule for automated repayment.",
+        "PDA: [SCHEDULE_SEED, loan_id.to_le_bytes()]"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "loan_id",
+            "type": "u64"
+          },
+          {
+            "name": "borrower",
+            "type": "pubkey"
+          },
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "total_installments",
+            "type": "u8"
+          },
+          {
+            "name": "paid_installments",
+            "type": "u8"
+          },
+          {
+            "name": "amount_per_installment",
+            "type": "u64"
+          },
+          {
+            "name": "interval_secs",
+            "type": "i64"
+          },
+          {
+            "name": "next_due_date",
+            "type": "i64"
+          },
+          {
+            "name": "collection_agent",
+            "type": "pubkey"
+          },
+          {
+            "name": "is_active",
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "InterestAccrued",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "old_index",
+            "type": "u128"
+          },
+          {
+            "name": "new_index",
+            "type": "u128"
+          },
+          {
+            "name": "elapsed",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Loan",
+      "docs": [
+        "Individual loan account.",
+        "PDA: [LOAN_SEED, pool, loan_id.to_le_bytes()]"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "loan_id",
+            "type": "u64"
+          },
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "borrower",
+            "type": "pubkey"
+          },
+          {
+            "name": "lending_agent",
+            "type": "pubkey"
+          },
+          {
+            "name": "principal",
+            "type": "u64"
+          },
+          {
+            "name": "interest_rate_bps",
+            "type": "u16"
+          },
+          {
+            "name": "start_time",
+            "type": "i64"
+          },
+          {
+            "name": "due_date",
+            "type": "i64"
+          },
+          {
+            "name": "repaid_amount",
+            "type": "u64"
+          },
+          {
+            "name": "status",
+            "type": {
+              "defined": {
+                "name": "LoanStatus"
+              }
+            }
+          },
+          {
+            "name": "escrow",
+            "type": "pubkey"
+          },
+          {
+            "name": "schedule",
+            "type": "pubkey"
+          },
+          {
+            "name": "agent_decision_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "index_snapshot",
+            "docs": [
+              "Snapshot of pool interest_index at loan creation"
+            ],
+            "type": "u128"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LoanDefaulted",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "loan_id",
+            "type": "u64"
+          },
+          {
+            "name": "borrower",
+            "type": "pubkey"
+          },
+          {
+            "name": "outstanding",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LoanDisbursed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "loan_id",
+            "type": "u64"
+          },
+          {
+            "name": "borrower",
+            "type": "pubkey"
+          },
+          {
+            "name": "agent",
+            "type": "pubkey"
+          },
+          {
+            "name": "principal",
+            "type": "u64"
+          },
+          {
+            "name": "rate_bps",
+            "type": "u16"
+          },
+          {
+            "name": "due_date",
+            "type": "i64"
+          },
+          {
+            "name": "decision_hash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "LoanFullyRepaid",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "loan_id",
+            "type": "u64"
+          },
+          {
+            "name": "borrower",
+            "type": "pubkey"
+          },
+          {
+            "name": "total_paid",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LoanRepaid",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "loan_id",
+            "type": "u64"
+          },
+          {
+            "name": "borrower",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "remaining",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LoanStatus",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Active"
+          },
+          {
+            "name": "Repaid"
+          },
+          {
+            "name": "Defaulted"
+          },
+          {
+            "name": "Liquidated"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PermState",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "is_paused",
+            "type": "bool"
+          },
+          {
+            "name": "pause_timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "total_agents",
+            "type": "u32"
+          },
+          {
+            "name": "circuit_breaker_active",
+            "docs": [
+              "T4A.3: Circuit breaker state"
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "losses_24h",
+            "type": "u64"
+          },
+          {
+            "name": "deposits_snapshot",
+            "type": "u64"
+          },
+          {
+            "name": "snapshot_timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "pending_admin",
+            "docs": [
+              "T4A.5: Pending admin rotation"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "rotation_request_time",
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PermissionTier",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Read"
+          },
+          {
+            "name": "Operate"
+          },
+          {
+            "name": "Manage"
+          },
+          {
+            "name": "Admin"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PoolInitialized",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "token_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PoolState",
+      "docs": [
+        "Global pool state per token mint.",
+        "PDA: [POOL_SEED, token_mint]"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "token_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "total_deposited",
+            "type": "u64"
+          },
+          {
+            "name": "total_borrowed",
+            "type": "u64"
+          },
+          {
+            "name": "total_interest_earned",
+            "type": "u64"
+          },
+          {
+            "name": "total_defaults",
+            "type": "u64"
+          },
+          {
+            "name": "active_loans",
+            "type": "u32"
+          },
+          {
+            "name": "total_loans_issued",
+            "type": "u32"
+          },
+          {
+            "name": "next_loan_id",
+            "type": "u64"
+          },
+          {
+            "name": "base_rate_bps",
+            "type": "u16"
+          },
+          {
+            "name": "max_utilization_bps",
+            "type": "u16"
+          },
+          {
+            "name": "interest_index",
+            "docs": [
+              "Cumulative interest index (scaled by PRECISION=1e18)"
+            ],
+            "type": "u128"
+          },
+          {
+            "name": "last_update_ts",
+            "type": "i64"
+          },
+          {
+            "name": "is_paused",
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "vault_bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ScheduleCreated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "loan_id",
+            "type": "u64"
+          },
+          {
+            "name": "installments",
+            "type": "u8"
+          },
+          {
+            "name": "amount_each",
+            "type": "u64"
+          },
+          {
+            "name": "interval_secs",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Withdrawn",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "to",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "total_deposited",
+            "type": "u64"
+          }
+        ]
+      }
+    }
+  ]
+}

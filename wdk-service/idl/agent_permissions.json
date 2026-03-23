@@ -1,0 +1,1389 @@
+{
+  "address": "57uCTUNFStnMEkGLQT869Qdo5fo9EAqPsp5dn5QWQUqG",
+  "metadata": {
+    "name": "agent_permissions",
+    "version": "0.2.0",
+    "spec": "0.1.0",
+    "description": "4-tier permission model, circuit breaker, time-locked admin rotation for CredAgent"
+  },
+  "instructions": [
+    {
+      "name": "cancel_admin_rotation",
+      "docs": [
+        "Cancel a pending rotation (only current admin)."
+      ],
+      "discriminator": [
+        213,
+        54,
+        2,
+        41,
+        251,
+        11,
+        205,
+        110
+      ],
+      "accounts": [
+        {
+          "name": "perm_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  101,
+                  114,
+                  109,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "perm_state"
+          ]
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "check_permission_and_spend",
+      "docs": [
+        "T4A.1: Check permission tier AND spending limit in one CPI call.",
+        "Called by lending_pool.conditional_disburse before disbursement.",
+        "",
+        "AUDIT:",
+        "- Checks pause state (manual + circuit breaker)",
+        "- Checks agent is active",
+        "- Checks tier >= required_tier",
+        "- Resets daily counter on epoch boundary",
+        "- Cumulative spend check prevents split-tx bypass",
+        "- All checks atomic — either all pass or entire tx reverts"
+      ],
+      "discriminator": [
+        11,
+        163,
+        6,
+        126,
+        156,
+        84,
+        152,
+        144
+      ],
+      "accounts": [
+        {
+          "name": "perm_state",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  101,
+                  114,
+                  109,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "agent_identity",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  95,
+                  105,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "agent_signer"
+              }
+            ]
+          }
+        },
+        {
+          "name": "agent_signer",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "required_role",
+          "type": {
+            "defined": {
+              "name": "AgentRole"
+            }
+          }
+        },
+        {
+          "name": "required_tier",
+          "type": {
+            "defined": {
+              "name": "PermissionTier"
+            }
+          }
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "deactivate_agent",
+      "discriminator": [
+        205,
+        171,
+        239,
+        225,
+        82,
+        126,
+        96,
+        166
+      ],
+      "accounts": [
+        {
+          "name": "perm_state",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  101,
+                  114,
+                  109,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "agent_identity",
+          "writable": true
+        },
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "perm_state"
+          ]
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "emergency_pause",
+      "docs": [
+        "Pause all lending operations.",
+        "AUDIT: Escrow PDAs remain locked — funds are safe.",
+        "Only new disbursements and pulls are halted.",
+        "Borrowers can still repay (repay checks pause separately)."
+      ],
+      "discriminator": [
+        21,
+        143,
+        27,
+        142,
+        200,
+        181,
+        210,
+        255
+      ],
+      "accounts": [
+        {
+          "name": "perm_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  101,
+                  114,
+                  109,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "perm_state"
+          ]
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "finalize_admin_rotation",
+      "docs": [
+        "Step 2: Finalize rotation after 48h time lock.",
+        "AUDIT: Can be called by EITHER old or new admin (both should agree).",
+        "Time lock ensures community/team has 48h to notice and cancel if compromised."
+      ],
+      "discriminator": [
+        211,
+        30,
+        107,
+        71,
+        237,
+        62,
+        61,
+        1
+      ],
+      "accounts": [
+        {
+          "name": "perm_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  101,
+                  114,
+                  109,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "finalizer",
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "initialize",
+      "discriminator": [
+        175,
+        175,
+        109,
+        31,
+        13,
+        152,
+        155,
+        237
+      ],
+      "accounts": [
+        {
+          "name": "perm_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  101,
+                  114,
+                  109,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "record_loss",
+      "docs": [
+        "Record a loss event (default, liquidation shortfall).",
+        "Admin-only until a dedicated trusted caller path is implemented.",
+        "Auto-pauses if cumulative 24h losses exceed 10% of deposits snapshot.",
+        "",
+        "AUDIT:",
+        "- Rolling 24h window: resets snapshot if > 24h since last snapshot",
+        "- Loss ratio calculated with checked arithmetic",
+        "- Circuit breaker can only be reset by admin (manual review required)"
+      ],
+      "discriminator": [
+        112,
+        182,
+        48,
+        145,
+        171,
+        216,
+        247,
+        43
+      ],
+      "accounts": [
+        {
+          "name": "perm_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  101,
+                  114,
+                  109,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "perm_state"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "loss_amount",
+          "type": "u64"
+        },
+        {
+          "name": "current_deposits",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "register_agent",
+      "docs": [
+        "T4A.1: Register agent with explicit permission tier.",
+        "AUDIT: Cannot grant Tier 3 (Admin) via this instruction.",
+        "Admin privileges require the time-locked rotation flow."
+      ],
+      "discriminator": [
+        135,
+        157,
+        66,
+        195,
+        2,
+        113,
+        175,
+        30
+      ],
+      "accounts": [
+        {
+          "name": "perm_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  101,
+                  114,
+                  109,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "agent_identity",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  103,
+                  101,
+                  110,
+                  116,
+                  95,
+                  105,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "agent_wallet"
+              }
+            ]
+          }
+        },
+        {
+          "name": "agent_wallet"
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "perm_state"
+          ]
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "role",
+          "type": {
+            "defined": {
+              "name": "AgentRole"
+            }
+          }
+        },
+        {
+          "name": "tier",
+          "type": {
+            "defined": {
+              "name": "PermissionTier"
+            }
+          }
+        },
+        {
+          "name": "daily_limit",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "request_admin_rotation",
+      "docs": [
+        "Step 1: Current admin requests rotation to new admin.",
+        "Starts 48-hour time lock. No immediate effect."
+      ],
+      "discriminator": [
+        219,
+        248,
+        175,
+        50,
+        212,
+        196,
+        27,
+        173
+      ],
+      "accounts": [
+        {
+          "name": "perm_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  101,
+                  114,
+                  109,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "perm_state"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "new_admin",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "reset_circuit_breaker",
+      "docs": [
+        "Admin resets circuit breaker after manual review.",
+        "AUDIT: Only admin (Tier 3) can reset. Resets loss counter."
+      ],
+      "discriminator": [
+        225,
+        48,
+        84,
+        136,
+        90,
+        146,
+        26,
+        149
+      ],
+      "accounts": [
+        {
+          "name": "perm_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  101,
+                  114,
+                  109,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "perm_state"
+          ]
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "set_agent_tier",
+      "discriminator": [
+        164,
+        71,
+        127,
+        40,
+        98,
+        78,
+        112,
+        178
+      ],
+      "accounts": [
+        {
+          "name": "perm_state",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  101,
+                  114,
+                  109,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "agent_identity",
+          "writable": true
+        },
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "perm_state"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "new_tier",
+          "type": {
+            "defined": {
+              "name": "PermissionTier"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "set_daily_limit",
+      "discriminator": [
+        0,
+        229,
+        100,
+        68,
+        254,
+        3,
+        185,
+        75
+      ],
+      "accounts": [
+        {
+          "name": "perm_state",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  101,
+                  114,
+                  109,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "agent_identity",
+          "writable": true
+        },
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "perm_state"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "new_limit",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "unpause",
+      "discriminator": [
+        169,
+        144,
+        4,
+        38,
+        10,
+        141,
+        188,
+        255
+      ],
+      "accounts": [
+        {
+          "name": "perm_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  101,
+                  114,
+                  109,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "admin",
+          "signer": true,
+          "relations": [
+            "perm_state"
+          ]
+        }
+      ],
+      "args": []
+    }
+  ],
+  "accounts": [
+    {
+      "name": "AgentIdentity",
+      "discriminator": [
+        11,
+        149,
+        31,
+        27,
+        186,
+        76,
+        241,
+        72
+      ]
+    },
+    {
+      "name": "PermState",
+      "discriminator": [
+        210,
+        170,
+        247,
+        224,
+        90,
+        208,
+        205,
+        235
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "AdminRotationCancelled",
+      "discriminator": [
+        7,
+        214,
+        164,
+        89,
+        230,
+        205,
+        98,
+        226
+      ]
+    },
+    {
+      "name": "AdminRotationFinalized",
+      "discriminator": [
+        65,
+        204,
+        127,
+        184,
+        141,
+        191,
+        79,
+        16
+      ]
+    },
+    {
+      "name": "AdminRotationRequested",
+      "discriminator": [
+        128,
+        213,
+        252,
+        223,
+        5,
+        182,
+        17,
+        19
+      ]
+    },
+    {
+      "name": "AgentRegistered",
+      "discriminator": [
+        191,
+        78,
+        217,
+        54,
+        232,
+        100,
+        189,
+        85
+      ]
+    },
+    {
+      "name": "CircuitBreakerReset",
+      "discriminator": [
+        215,
+        141,
+        199,
+        11,
+        71,
+        140,
+        36,
+        87
+      ]
+    },
+    {
+      "name": "CircuitBreakerTripped",
+      "discriminator": [
+        188,
+        9,
+        111,
+        118,
+        136,
+        206,
+        199,
+        65
+      ]
+    },
+    {
+      "name": "PermissionChecked",
+      "discriminator": [
+        153,
+        48,
+        248,
+        82,
+        253,
+        211,
+        70,
+        103
+      ]
+    },
+    {
+      "name": "SpendRecorded",
+      "discriminator": [
+        126,
+        238,
+        76,
+        234,
+        130,
+        230,
+        173,
+        166
+      ]
+    },
+    {
+      "name": "SystemPaused",
+      "discriminator": [
+        199,
+        92,
+        193,
+        5,
+        14,
+        241,
+        182,
+        17
+      ]
+    },
+    {
+      "name": "SystemUnpaused",
+      "discriminator": [
+        29,
+        28,
+        211,
+        10,
+        79,
+        179,
+        175,
+        13
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "Paused",
+      "msg": "System is paused by admin or circuit breaker"
+    },
+    {
+      "code": 6001,
+      "name": "CircuitBreakerTripped",
+      "msg": "Circuit breaker tripped: pool losses exceed 10% in 24h"
+    },
+    {
+      "code": 6002,
+      "name": "Deactivated",
+      "msg": "Agent deactivated"
+    },
+    {
+      "code": 6003,
+      "name": "LimitExceeded",
+      "msg": "Daily spending limit exceeded"
+    },
+    {
+      "code": 6004,
+      "name": "Unauthorized",
+      "msg": "Signer does not match agent identity"
+    },
+    {
+      "code": 6005,
+      "name": "Overflow",
+      "msg": "Arithmetic overflow"
+    },
+    {
+      "code": 6006,
+      "name": "InvalidLimit",
+      "msg": "Invalid daily limit"
+    },
+    {
+      "code": 6007,
+      "name": "InsufficientTier",
+      "msg": "Insufficient permission tier for this operation"
+    },
+    {
+      "code": 6008,
+      "name": "RotationTimeLockActive",
+      "msg": "Admin rotation time lock has not elapsed (48h required)"
+    },
+    {
+      "code": 6009,
+      "name": "NoPendingRotation",
+      "msg": "No pending admin rotation to finalize"
+    },
+    {
+      "code": 6010,
+      "name": "AdminOnly",
+      "msg": "Only Tier 3 (Admin) can perform this action"
+    },
+    {
+      "code": 6011,
+      "name": "CannotGrantAdmin",
+      "msg": "Cannot set tier to Admin via register — use admin rotation"
+    },
+    {
+      "code": 6012,
+      "name": "WrongRole",
+      "msg": "Agent role does not match the required operation role"
+    }
+  ],
+  "types": [
+    {
+      "name": "AdminRotationCancelled",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AdminRotationFinalized",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "old_admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "new_admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AdminRotationRequested",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "current_admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "new_admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "effective_after",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AgentIdentity",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "wallet",
+            "type": "pubkey"
+          },
+          {
+            "name": "role",
+            "type": {
+              "defined": {
+                "name": "AgentRole"
+              }
+            }
+          },
+          {
+            "name": "tier",
+            "type": {
+              "defined": {
+                "name": "PermissionTier"
+              }
+            }
+          },
+          {
+            "name": "daily_limit",
+            "type": "u64"
+          },
+          {
+            "name": "daily_spent",
+            "type": "u64"
+          },
+          {
+            "name": "limit_reset_epoch",
+            "type": "i64"
+          },
+          {
+            "name": "is_active",
+            "type": "bool"
+          },
+          {
+            "name": "registered_at",
+            "type": "i64"
+          },
+          {
+            "name": "total_operations",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AgentRegistered",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "wallet",
+            "type": "pubkey"
+          },
+          {
+            "name": "role",
+            "type": {
+              "defined": {
+                "name": "AgentRole"
+              }
+            }
+          },
+          {
+            "name": "tier",
+            "type": {
+              "defined": {
+                "name": "PermissionTier"
+              }
+            }
+          },
+          {
+            "name": "daily_limit",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AgentRole",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Oracle"
+          },
+          {
+            "name": "Lending"
+          },
+          {
+            "name": "Collection"
+          },
+          {
+            "name": "Yield"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CircuitBreakerReset",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CircuitBreakerTripped",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "losses",
+            "type": "u64"
+          },
+          {
+            "name": "deposits",
+            "type": "u64"
+          },
+          {
+            "name": "loss_bps",
+            "type": "u16"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PermState",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "is_paused",
+            "type": "bool"
+          },
+          {
+            "name": "pause_timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "total_agents",
+            "type": "u32"
+          },
+          {
+            "name": "circuit_breaker_active",
+            "docs": [
+              "T4A.3: Circuit breaker state"
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "losses_24h",
+            "type": "u64"
+          },
+          {
+            "name": "deposits_snapshot",
+            "type": "u64"
+          },
+          {
+            "name": "snapshot_timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "pending_admin",
+            "docs": [
+              "T4A.5: Pending admin rotation"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "rotation_request_time",
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PermissionChecked",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "agent",
+            "type": "pubkey"
+          },
+          {
+            "name": "required_tier",
+            "type": "u8"
+          },
+          {
+            "name": "agent_tier",
+            "type": "u8"
+          },
+          {
+            "name": "allowed",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PermissionTier",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Read"
+          },
+          {
+            "name": "Operate"
+          },
+          {
+            "name": "Manage"
+          },
+          {
+            "name": "Admin"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SpendRecorded",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "agent",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "daily_spent",
+            "type": "u64"
+          },
+          {
+            "name": "daily_limit",
+            "type": "u64"
+          },
+          {
+            "name": "tier",
+            "type": {
+              "defined": {
+                "name": "PermissionTier"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "SystemPaused",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SystemUnpaused",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    }
+  ]
+}

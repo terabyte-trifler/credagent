@@ -757,7 +757,7 @@ export class MCPBridge {
     let cached = this.#programCache.get(name);
     if (!cached) {
       const root = this.#resolveWorkspaceRoot();
-      const idlPath = path.join(root, 'target', 'idl', `${name}.json`);
+      const idlPath = this.#resolveIdlPath(root, `${name}.json`);
       const idl = JSON.parse(fs.readFileSync(idlPath, 'utf8'));
       cached = { idl };
       this.#programCache.set(name, cached);
@@ -783,6 +783,18 @@ export class MCPBridge {
     const parent = path.resolve(cwd, '..');
     if (fs.existsSync(path.join(parent, 'target', 'idl'))) return parent;
     return cwd;
+  }
+
+  #resolveIdlPath(root, fileName) {
+    const candidates = [
+      path.join(root, 'target', 'idl', fileName),
+      path.join(root, 'wdk-service', 'idl', fileName),
+      path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', 'idl', fileName),
+    ];
+    for (const candidate of candidates) {
+      if (fs.existsSync(candidate)) return candidate;
+    }
+    throw new Error(`MISSING_IDL: ${candidates[0]}`);
   }
 
   #requireEnv(name) {

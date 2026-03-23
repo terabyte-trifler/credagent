@@ -292,11 +292,21 @@ function readU16(buf, offset) {
   return buf.readUInt16LE(offset);
 }
 
-function resolveLendingPoolProgramId() {
-  const idlPath = path.join(resolveWorkspaceRoot(), 'target/idl/lending_pool.json');
-  if (!fs.existsSync(idlPath)) {
-    throw new Error(`MISSING_IDL: ${idlPath}`);
+function resolveIdlPath(fileName) {
+  const workspaceRoot = resolveWorkspaceRoot();
+  const candidates = [
+    path.join(workspaceRoot, 'target', 'idl', fileName),
+    path.join(workspaceRoot, 'wdk-service', 'idl', fileName),
+    path.join(__dirname, '..', 'idl', fileName),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
   }
+  throw new Error(`MISSING_IDL: ${candidates[0]}`);
+}
+
+function resolveLendingPoolProgramId() {
+  const idlPath = resolveIdlPath('lending_pool.json');
   const idl = JSON.parse(fs.readFileSync(idlPath, 'utf8'));
   return new PublicKey(idl.address);
 }
@@ -663,11 +673,7 @@ function loadKeypairFromFile(walletPath) {
 }
 
 async function ensureAgentPermissionsRuntime(walletService) {
-  const workspaceRoot = resolveWorkspaceRoot();
-  const idlPath = path.join(workspaceRoot, 'target/idl/agent_permissions.json');
-  if (!fs.existsSync(idlPath)) {
-    throw new Error(`MISSING_IDL: ${idlPath}`);
-  }
+  const idlPath = resolveIdlPath('agent_permissions.json');
 
   const walletPath = resolveAnchorWalletPath();
   if (!fs.existsSync(walletPath)) {
@@ -728,11 +734,7 @@ async function ensureAgentPermissionsRuntime(walletService) {
 }
 
 async function submitCreditHistoryEvent(walletService, eventType, borrowerAddress, amountRaw = 0) {
-  const workspaceRoot = resolveWorkspaceRoot();
-  const idlPath = path.join(workspaceRoot, 'target/idl/credit_score_oracle.json');
-  if (!fs.existsSync(idlPath)) {
-    throw new Error(`MISSING_IDL: ${idlPath}`);
-  }
+  const idlPath = resolveIdlPath('credit_score_oracle.json');
 
   const walletPath = resolveAnchorWalletPath();
   if (!fs.existsSync(walletPath)) {
