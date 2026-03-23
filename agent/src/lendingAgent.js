@@ -64,9 +64,13 @@ export class LendingDecisionAgent {
   // T3.5: Evaluate
   // ═══════════════════════════════════════
 
-  async evaluateLoan(borrowerAddress, requestedAmount, requestedDuration = 60) {
+  async evaluateLoan(borrowerAddress, requestedAmount, requestedDuration = 60, opts = {}) {
     const t0 = performance.now();
-    const scoreResult = await this.#mcpBridge.executeTool('compute_credit_score', { address: borrowerAddress });
+    const scoreResult = await this.#mcpBridge.executeTool('compute_credit_score', {
+      address: borrowerAddress,
+      cluster: opts.cluster,
+      force_fresh: opts.forceFresh === true,
+    });
     if (!scoreResult.success) return this.#deny(borrowerAddress, 'SCORE_FAILED', scoreResult.error, t0);
 
     const score = scoreResult.result;

@@ -52,8 +52,9 @@ export function useCreditScore() {
       if (!resp.ok) throw new Error(`API error: ${resp.status}`);
       const data = await resp.json();
       if (data.error) throw new Error(data.error);
-      setResult(data);
-      return data;
+      const resolved = { ...data, cluster };
+      setResult(resolved);
+      return resolved;
     } catch (err: any) {
       setError(err.message);
       return null;

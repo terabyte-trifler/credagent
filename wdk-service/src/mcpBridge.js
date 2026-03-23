@@ -14,7 +14,7 @@
  * S3. Rate limited per agent: configurable max calls/hour
  * S4. Every call logged with timing, params (sans secrets), result
  * S5. Failed calls logged with error — never silently swallowed
- * S6. ML API calls have 10s timeout — never hang
+ * S6. ML API calls have bounded timeout — never hang
  * S7. No tool returns seeds, private keys, or internal WDK state
  * S8. Decision reasoning hashed before on-chain storage (privacy)
  */
@@ -32,7 +32,7 @@ import { Token, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } from '@solana/sp
 
 const DEFAULT_ML_API = 'http://localhost:5001';
 const DEFAULT_RATE_LIMIT = 200;
-const ML_TIMEOUT_MS = 10_000;
+const ML_TIMEOUT_MS = Number.parseInt(process.env.ML_API_TIMEOUT_MS || '30000', 10);
 const NON_THROTTLED_TOOLS = new Set([
   'get_balance',
   'compute_credit_score',
@@ -176,10 +176,16 @@ export class MCPBridge {
         return this.#callML('/score', {
           address: params.address,
           features: params.features || undefined,
+          cluster: params.cluster || undefined,
+          force_fresh: params.force_fresh === true,
         });
 
       case 'check_eligibility': {
-        const score = await this.#callML('/score', { address: params.address });
+        const score = await this.#callML('/score', {
+          address: params.address,
+          cluster: params.cluster || undefined,
+          force_fresh: params.force_fresh === true,
+        });
         const terms = score.recommended_terms || {};
         return {
           eligible: (terms.max_loan_usd || 0) >= params.loan_amount_usd && (terms.max_ltv_bps || 0) > 0,

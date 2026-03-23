@@ -399,7 +399,7 @@ def internal_error(_):
 # ═══════════════════════════════════════════
 
 if __name__ == "__main__":
-    port = int(os.getenv("ML_API_PORT", "5001"))
+    port = int(os.getenv("PORT", os.getenv("ML_API_PORT", "5001")))
     debug = os.getenv("FLASK_DEBUG", "false").lower() == "true"
     print(f"[api] Starting on port {port} (debug={debug})")
     app.run(host="0.0.0.0", port=port, debug=debug)

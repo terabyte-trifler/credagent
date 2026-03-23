@@ -544,6 +544,8 @@ async function buildAgentRuntimeSnapshot(services) {
 function parseLoanRequest(body = {}) {
   const amountUsd = Number(body.amountUsd ?? body.amount ?? 0);
   const durationDays = Number(body.durationDays ?? body.duration ?? 0);
+  const cluster = body.cluster === 'mainnet' ? 'mainnet-beta' : body.cluster;
+  const forceFresh = Boolean(body.forceFresh ?? body.force_fresh);
   if (!body.borrower || typeof body.borrower !== 'string') {
     throw new Error('Missing "borrower" field');
   }
@@ -555,6 +557,8 @@ function parseLoanRequest(body = {}) {
     borrower: body.borrower,
     amountUsd,
     durationDays: safeDuration,
+    cluster: cluster || 'devnet',
+    forceFresh,
   };
 }
 
@@ -1093,6 +1097,7 @@ export function createHttpServer(services, config = {}) {
           request.borrower,
           request.amountUsd,
           request.durationDays,
+          { cluster: request.cluster, forceFresh: request.forceFresh },
         );
         return json(res, 200, { success: true, result });
       } catch (error) {
@@ -1216,6 +1221,7 @@ export function createHttpServer(services, config = {}) {
           request.borrower,
           request.amountUsd,
           request.durationDays,
+          { cluster: request.cluster, forceFresh: request.forceFresh },
         );
         const execution = String(evaluation.status || '').startsWith('DENIED')
           ? null

@@ -142,6 +142,8 @@ export default function App() {
             borrower: latestCreditResult.address,
             amountUsd: parsed.amountUsd,
             durationDays: requestedDuration,
+            cluster: latestCreditResult.cluster || 'devnet',
+            forceFresh: true,
           }),
         });
         const payload = await resp.json();

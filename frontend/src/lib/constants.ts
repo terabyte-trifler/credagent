@@ -24,6 +24,7 @@ export interface AgentInfo {
 export interface CreditResult {
   address: string; score: number; risk_tier: string; risk_tier_num: number;
   confidence: number; default_probability: number; model_hash: string;
+  cluster?: 'devnet' | 'mainnet-beta';
   starter_eligible?: boolean;
   lending_path?: 'standard' | 'starter';
   zk_proof_hash?: string;

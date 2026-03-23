@@ -120,6 +120,15 @@ export const computeCreditScore = {
         type: 'object',
         description: 'Optional: pre-extracted features. If omitted, auto-extracted.',
       },
+      cluster: {
+        type: 'string',
+        enum: ['devnet', 'mainnet-beta', 'mainnet'],
+        description: 'Optional Solana cluster to score against.',
+      },
+      force_fresh: {
+        type: 'boolean',
+        description: 'Optional: bypass cached feature extraction and force a fresh live score.',
+      },
     },
     required: ['address'],
     additionalProperties: false,

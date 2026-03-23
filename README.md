@@ -1,153 +1,317 @@
-# CredAgent — Autonomous Lending on Solana
+# CredAgent
 
-> AI agents make lending decisions. Solana enforces them. Tether WDK handles the money.
+Autonomous lending on Solana powered by AI agents, self-custodial wallets, programmable payment flows, and live on-chain settlement.
 
-**CredAgent** is an autonomous lending protocol where OpenClaw AI agents score borrowers, negotiate loan terms, and manage the entire loan lifecycle — while Solana smart contracts enforce every financial rule atomically and Tether WDK provides self-custodial wallet infrastructure.
+CredAgent combines:
 
-**Hackathon Galactica: WDK Edition 1** — Feb 25 – Mar 22, 2026
+- Solana programs for escrow, lending, permissions, and credit state
+- an ML credit scoring API for borrower assessment
+- an MCP/WDK runtime for self-custodial agent wallets and tool execution
+- a React dashboard for scoring, negotiation, lending, repayment, pool analytics, and runtime monitoring
 
----
+## What CredAgent Does
 
-## Architecture
+CredAgent turns lending into an agent-driven workflow:
 
+1. A borrower wallet is scored using live credit features and an XGBoost model.
+2. The Credit Agent pushes that score on-chain to the credit oracle.
+3. The Lending Agent evaluates eligibility, negotiates terms, and initiates the loan flow.
+4. Collateral is locked in a program-owned escrow PDA.
+5. Loan funds are disbursed from the lending pool only if all conditions pass atomically.
+6. A repayment schedule is created and repayments can be processed on-chain.
+7. Interest accrues to the pool and pool analytics update from live state.
+
+## Live System Overview
+
+### Agent Layer
+
+- `credit-agent`
+  - scores wallets
+  - updates the credit oracle
+  - drives borrower risk assessment
+- `lending-agent`
+  - evaluates requests
+  - negotiates terms
+  - executes loan origination
+- `collection-agent`
+  - tracks repayment lifecycle
+  - coordinates default and liquidation paths
+- `yield-agent`
+  - monitors pool capital and runtime yield operations
+
+### Solana Programs
+
+- [`/Users/terabyte_trifler/Documents/credagent/programs/credit_score_oracle`](/Users/terabyte_trifler/Documents/credagent/programs/credit_score_oracle)
+  - stores credit scores
+  - stores credit history
+  - manages score freshness and oracle updates
+- [`/Users/terabyte_trifler/Documents/credagent/programs/lending_pool`](/Users/terabyte_trifler/Documents/credagent/programs/lending_pool)
+  - manages the lending pool
+  - locks collateral in escrow
+  - disburses loans
+  - tracks repayments
+  - accrues pool interest
+- [`/Users/terabyte_trifler/Documents/credagent/programs/agent_permissions`](/Users/terabyte_trifler/Documents/credagent/programs/agent_permissions)
+  - enforces agent roles
+  - enforces daily limits
+  - supports pause and safety controls
+
+### Off-Chain Services
+
+- [`/Users/terabyte_trifler/Documents/credagent/ml-api`](/Users/terabyte_trifler/Documents/credagent/ml-api)
+  - Flask ML API
+  - XGBoost scoring
+  - proof generation and verification
+- [`/Users/terabyte_trifler/Documents/credagent/wdk-service`](/Users/terabyte_trifler/Documents/credagent/wdk-service)
+  - MCP runtime
+  - Tether WDK wallet execution
+  - agent runtime endpoints
+  - pool history and audit endpoints
+- [`/Users/terabyte_trifler/Documents/credagent/frontend`](/Users/terabyte_trifler/Documents/credagent/frontend)
+  - React/Vite dashboard
+  - Phantom wallet connection
+  - live scoring, negotiation, pool, loan, and agent views
+
+## Core Running Features
+
+### Credit Scoring
+
+- wallet scoring with FICO-style scores from `300-850`
+- risk tiers and default probability
+- cluster-aware scoring for `devnet` and `mainnet-beta`
+- on-chain credit history ingestion
+- score push to `CreditScoreOracle`
+- proof metadata and proof verification endpoint
+
+### Lending Flow
+
+- loan negotiation from the dashboard
+- starter-loan path and normal loan path
+- collateral lock into escrow PDA
+- conditional disbursement with atomic gate checks
+- on-chain loan creation
+- repayment flow from the borrower wallet
+- collateral release after full repayment
+
+### Pool and Yield
+
+- live pool deposit tracking
+- live borrowed, utilization, and interest-earned metrics
+- historical pool snapshots and charting
+- real on-chain yield accrual on the main pool
+- demo script that proves pool interest increases after a loan is issued and repaid
+
+### Agent Runtime
+
+- persistent agent wallets
+- funded devnet agent runtime
+- live runtime status
+- live decisions feed
+- live MCP health and runtime endpoints
+
+## Programmable Payment Flows
+
+CredAgent implements these programmable lending primitives:
+
+- `lock_collateral`
+  - locks borrower collateral in a PDA-owned escrow vault
+- `conditional_disburse`
+  - validates score, escrow, utilization, and agent authorization atomically
+- `create_schedule`
+  - creates the loan repayment schedule
+- `pull_installment`
+  - supports scheduled repayment collection logic
+- `repay`
+  - settles borrower repayment on-chain
+- `release_collateral`
+  - returns escrowed collateral after repayment
+- `mark_default`
+  - marks overdue loans as defaulted
+- `liquidate_escrow`
+  - moves collateral to the pool after default
+- `accrue_interest`
+  - updates pool interest accounting on interactions
+
+## Repository Layout
+
+```text
+credagent/
+├── agent/               OpenClaw-style agent implementations and skills
+├── docs/                runtime and project docs
+├── frontend/            React + Vite dashboard
+├── ml-api/              Flask ML scoring API
+├── programs/            Anchor programs
+│   ├── agent_permissions/
+│   ├── credit_score_oracle/
+│   └── lending_pool/
+├── scripts/             deployment, verification, and demo scripts
+├── tests/               integration and security tests
+└── wdk-service/         MCP + WDK runtime
 ```
-┌─────────────────────────────────────────────────────┐
-│  Agent Layer (OpenClaw)                             │
-│  Credit Agent · Lending Agent · Collection · Yield  │
-│          ↓ reasons WHAT to do                       │
-├─────────────────────────────────────────────────────┤
-│  Safety Middleware                                   │
-│  4-tier permissions · spending limits · circuit      │
-│  breaker · escrow-preserving pause                  │
-│          ↓ validates + rate-limits                   │
-├─────────────────────────────────────────────────────┤
-│  MCP Bridge (12 tools)                              │
-│  wallet · credit · payment primitives               │
-│          ↓ dispatches to WDK                        │
-├─────────────────────────────────────────────────────┤
-│  Wallet Layer (Tether WDK)                          │
-│  Self-custodial · SPL tokens · USDT0 bridge         │
-│          ↓ signs + broadcasts                       │
-├─────────────────────────────────────────────────────┤
-│  Smart Contract Layer (Solana/Anchor)               │
-│  CreditScoreOracle · LendingPool · AgentPermissions │
-│  7 payment primitives · escrow PDAs · streaming     │
-└─────────────────────────────────────────────────────┘
-```
 
-### Key Separation
+## Local Run
 
-- **OpenClaw decides WHAT** — evaluates creditworthiness, negotiates terms
-- **Safety middleware validates** — tier checks, spending limits, circuit breaker
-- **WDK executes HOW** — self-custodial wallets, token transfers, signing
-- **Solana enforces RULES** — 4-gate conditional disburse, escrow PDAs, interest math
+CredAgent runs as three local processes.
 
-### 7 Programmable Payment Primitives
-
-| # | Primitive | What it does |
-|---|-----------|-------------|
-| 1 | `lock_collateral` | Creates PDA-owned escrow vault, deposits borrower's SPL tokens |
-| 2 | `conditional_disburse` | Atomic 4-gate check: score + escrow + utilization + agent auth |
-| 3 | `create_schedule` | N-installment repayment schedule with collection agent authority |
-| 4 | `pull_installment` | Collection agent auto-pulls via SPL delegate (no borrower action) |
-| 5 | `accrue_interest` | Per-epoch streaming with u128 liquidity index (Aave-pattern) |
-| 6 | `release_collateral` | Returns escrow to borrower on full repayment |
-| 7 | `liquidate_escrow` | Seizes collateral to pool on default |
-
----
-
-## Quick Start
-
-### Prerequisites
-- Rust 1.80+ / Solana CLI 2.1+ / Anchor 0.30+
-- Node.js 20+ / Yarn
-- Python 3.10+
-
-### Setup
+### 1. MCP / WDK Runtime
 
 ```bash
-# 1. Clone and install
-git clone https://github.com/your-org/credagent.git
-cd credagent
+cd /Users/terabyte_trifler/Documents/credagent/wdk-service
+npm install
+npm start
+```
 
-# 2. Solana programs
-solana config set -ud
-anchor build
-anchor keys sync
-anchor deploy
+Endpoints:
 
-# 3. WDK service
-cd wdk-service && npm install
+- `http://127.0.0.1:3100/health`
+- `http://127.0.0.1:3100/mcp`
 
-# 4. ML API
-cd ml-api
-python3 -m venv venv && source venv/bin/activate
+### 2. ML API
+
+```bash
+cd /Users/terabyte_trifler/Documents/credagent/ml-api
+python3 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
-python model.py  # Train XGBoost model
-
-# 5. Frontend
-cd frontend && npm install && npm run dev
-
-# 6. Run demo
-cd scripts && npx ts-node run-demo.ts
+python app.py
 ```
 
-### 1-Click Demo
-Open `http://localhost:3000` and click **"Run full demo"** to execute the golden path:
+Endpoint:
 
-Score → Lock Collateral → 4-Gate Disburse → Create Schedule → Pull Installment → Repay → Release Collateral
+- `http://127.0.0.1:5001/health`
 
----
+### 3. Frontend
 
-## Project Structure
-
-```
-credagent/
-├── programs/           3 Solana programs (Anchor/Rust)
-│   ├── credit_score_oracle/    ML-backed credit scores + DID
-│   ├── lending_pool/           7 payment primitives + escrow
-│   └── agent_permissions/      4-tier perms + circuit breaker
-├── wdk-service/        Tether WDK wallet + bridge + MCP tools
-├── ml-api/             XGBoost credit scoring API (Flask)
-├── agent/              4 OpenClaw agent skills + implementations
-├── frontend/           React dashboard (Vite + Tailwind)
-├── tests/              8 integration + 4 security test suites
-└── scripts/            Deploy, init, fund, demo scripts
+```bash
+cd /Users/terabyte_trifler/Documents/credagent/frontend
+npm install
+npm run dev
 ```
 
----
+Endpoint:
 
-## Judging Criteria Mapping
+- `http://127.0.0.1:3000/`
 
-| Criterion | Score | Implementation |
-|-----------|-------|---------------|
-| Agent Intelligence | 10/10 | 4 specialized agents with SKILL.md + safety demo |
-| WDK Integration | 10/10 | Self-custodial wallets + SPL ops + USDT0 bridge + Agent Skills + MCP |
-| Technical Execution | 10/10 | 3 programs, 7 payment primitives, u128 streaming interest |
-| Agentic Payment Design | 10/10 | Escrow PDAs + conditional disburse + installments + streaming |
-| Originality | 9/10 | First autonomous lending protocol on Solana with AI agents |
-| Polish & Ship-ability | 10/10 | Dashboard with 9 screens, 1-click demo, dark mode, Phantom |
-| Presentation | 9/10 | Pre-recorded demo, dashboard-first, criterion-mapped |
+## Environment
 
----
+Base example:
 
-## Security
+```bash
+SOLANA_RPC_URL=https://api.devnet.solana.com
+SOLANA_WS_URL=wss://api.devnet.solana.com
+OPENCLAW_CONFIG=./agent/config/openclaw.json
+ML_API_URL=http://127.0.0.1:5000
+WDK_ENV=devnet
+```
 
-See [SECURITY.md](./SECURITY.md) for the full audit checklist covering:
-- All Rust arithmetic uses `checked_*` (50+ calls)
-- All PDAs validated via Anchor constraints
-- Escrow vaults program-owned (no EOA custody)
-- 4-tier permission model with CPI enforcement
-- Circuit breaker (10% loss threshold)
-- 48-hour time-locked admin rotation
-- WDK seeds in `#private` class fields
-- Decision reasoning hashed before on-chain storage
+Frontend Vite variables:
 
----
+```bash
+VITE_RPC_URL=https://api.devnet.solana.com
+VITE_ML_API_URL=http://127.0.0.1:5001
+VITE_MCP_API_URL=http://127.0.0.1:3100
+VITE_CREDIT_ORACLE_ID=4cDu7SCGMzs6etzjJTyUXNXSJ6eRz54cDikSngezabhE
+VITE_LENDING_POOL_ID=8tTaDNjoukk18eAZmxBrB9bo35i4yAAKTpQ3MqZiAoid
+VITE_AGENT_PERMS_ID=57uCTUNFStnMEkGLQT869Qdo5fo9EAqPsp5dn5QWQUqG
+VITE_MOCK_USDT_MINT=6kacrDqGEv9Jh5eNv86pZEASx4C3jcmnjc1CNWQHS8Ca
+```
 
-## Team
+## Useful Commands
 
-Built for Hackathon Galactica: WDK Edition 1 (Feb 25 – Mar 22, 2026)
+### Typecheck
+
+```bash
+cd /Users/terabyte_trifler/Documents/credagent
+npm run typecheck
+```
+
+### Frontend Build
+
+```bash
+cd /Users/terabyte_trifler/Documents/credagent/frontend
+npm run build
+```
+
+### WDK / MCP Tests
+
+```bash
+cd /Users/terabyte_trifler/Documents/credagent/wdk-service
+npm test
+```
+
+### ML API Tests
+
+```bash
+cd /Users/terabyte_trifler/Documents/credagent/ml-api
+source venv/bin/activate
+pytest -q
+```
+
+### Prove Yield on the Main Pool
+
+```bash
+cd /Users/terabyte_trifler/Documents/credagent
+npm run demo:prove-yield
+```
+
+This script:
+
+- uses the live main app pool
+- updates the borrower score
+- locks collateral
+- disburses a real devnet loan
+- repays it after a short wait
+- prints the before/after `interestEarned` delta
+
+## Deployment Vision
+
+Recommended split deployment:
+
+- **Vercel**
+  - frontend only
+- **Railway / Render**
+  - ML API
+- **Fly.io / Render / VPS**
+  - MCP / WDK runtime
+- **Solana devnet**
+  - deployed programs
+
+## Security Model
+
+- self-custodial wallet execution via WDK
+- agent role separation
+- agent tier and spending controls
+- pool pause / safety controls
+- atomic gate enforcement in disbursement
+- program-owned escrow
+
+## Future Scope
+
+- full LP share accounting and user withdrawals
+- richer depositor position tracking
+- cross-chain capital routing through USDT0
+- richer yield-agent automation
+- DID-based borrower identity flows
+- soulbound reputation and credential layers
+- richer OpenClaw live attachment and messaging channels
+- Telegram and Discord borrower interfaces
+- enhanced autonomous collection flows
+- deeper decision hashing and on-chain audit trails
+- broader real-world credit feature inputs
+- stronger proof systems and privacy layers
+- production-grade hosted deployment and monitoring
+
+## Demo Summary
+
+CredAgent already demonstrates a working autonomous lending stack on Solana devnet:
+
+- live wallet scoring
+- on-chain score updates
+- loan negotiation
+- escrow-backed lending
+- on-chain repayment
+- live pool analytics
+- real yield accrual on the main pool
 
 ## License
 
