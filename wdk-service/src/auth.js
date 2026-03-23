@@ -233,14 +233,30 @@ export class AuthManager {
 export function createAuthFromEnv(audit = null) {
   const host = process.env.MCP_HOST || '127.0.0.1';
   const keys = (process.env.MCP_API_KEYS || '').split(',').map((key) => key.trim()).filter(Boolean);
+  const allowPublicNoAuth = ['1', 'true', 'yes', 'on'].includes(
+    String(process.env.MCP_ALLOW_PUBLIC_NOAUTH || '').toLowerCase(),
+  );
 
   if (keys.length === 0 && (host === '127.0.0.1' || host === 'localhost')) {
     return null;
   }
 
+  if (keys.length === 0 && allowPublicNoAuth) {
+    if (audit?.log) {
+      audit.log(
+        'AUTH_DISABLED_PUBLIC',
+        'system',
+        { detail: 'Public MCP auth disabled via MCP_ALLOW_PUBLIC_NOAUTH' },
+        null,
+        0,
+      );
+    }
+    return null;
+  }
+
   if (keys.length === 0) {
     throw new Error(
-      'SECURITY: MCP_HOST is not localhost but no MCP_API_KEYS configured. Set MCP_API_KEYS or use MCP_HOST=127.0.0.1 for local-only mode.',
+      'SECURITY: MCP_HOST is not localhost but no MCP_API_KEYS configured. Set MCP_API_KEYS, use MCP_HOST=127.0.0.1 for local-only mode, or explicitly opt in with MCP_ALLOW_PUBLIC_NOAUTH=true.',
     );
   }
 
