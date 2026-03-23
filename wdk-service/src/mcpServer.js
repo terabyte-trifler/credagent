@@ -79,6 +79,7 @@ const DEFAULT_AGENT_RUNTIME = {
 const TOKEN_DECIMALS = 1_000_000;
 const DEFAULT_POOL_HISTORY_LIMIT = 288;
 const DEFAULT_POOL_SNAPSHOT_MS = 5_000;
+const DEFAULT_MOCK_USDT_MINT = process.env.MOCK_USDT_MINT || '6kacrDqGEv9Jh5eNv86pZEASx4C3jcmnjc1CNWQHS8Ca';
 
 function isLocalHost(host) {
   return host === '127.0.0.1' || host === 'localhost';
@@ -322,7 +323,7 @@ function deriveLendingPoolAddresses(tokenMint) {
 
 async function fetchLivePoolSnapshot(walletService) {
   const connection = new anchor.web3.Connection(walletService.getRpcUrl(), 'confirmed');
-  const tokenMint = new PublicKey(process.env.MOCK_USDT_MINT);
+  const tokenMint = new PublicKey(DEFAULT_MOCK_USDT_MINT);
   const { poolState } = deriveLendingPoolAddresses(tokenMint);
   const account = await connection.getAccountInfo(poolState, 'confirmed');
   if (!account) {
@@ -367,7 +368,7 @@ async function fetchLivePoolSnapshot(walletService) {
 
 async function fetchLiveLoanRows(walletService) {
   const connection = new anchor.web3.Connection(walletService.getRpcUrl(), 'confirmed');
-  const tokenMint = new PublicKey(process.env.MOCK_USDT_MINT);
+  const tokenMint = new PublicKey(DEFAULT_MOCK_USDT_MINT);
   const { programId, poolState } = deriveLendingPoolAddresses(tokenMint);
   const poolAccount = await connection.getAccountInfo(poolState, 'confirmed');
   if (!poolAccount) return [];
@@ -587,7 +588,7 @@ async function buildExecutionPrep(services, borrower) {
 
   const loanId = Number(loanIdResult.result.loan_id);
   const borrowerPubkey = new PublicKey(borrower);
-  const usdtMint = new PublicKey(process.env.MOCK_USDT_MINT);
+  const usdtMint = new PublicKey(DEFAULT_MOCK_USDT_MINT);
   const collateralMint = new PublicKey(process.env.MOCK_XAUT_MINT || '11111111111111111111111111111111');
   const collectionAgentAddress = getCollectionAgentAddress(services.walletService);
   const { programId, poolState } = deriveLendingPoolAddresses(usdtMint);
