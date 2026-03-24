@@ -30,6 +30,17 @@ pub mod lending_pool {
         instructions::deposit::handler_withdraw(ctx, amount)
     }
 
+    pub fn set_collateral_price_oracle(ctx: Context<SetCollateralPriceOracle>) -> Result<()> {
+        instructions::admin::handler_set_collateral_price_oracle(ctx)
+    }
+
+    pub fn update_collateral_price(
+        ctx: Context<UpdateCollateralPrice>,
+        collateral_price_usdt_6: u64,
+    ) -> Result<()> {
+        instructions::admin::handler_update_collateral_price(ctx, collateral_price_usdt_6)
+    }
+
     // ═══════════════════════════════════
     // 7 Payment Primitives
     // ═══════════════════════════════════

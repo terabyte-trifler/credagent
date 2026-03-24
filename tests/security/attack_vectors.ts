@@ -7,6 +7,10 @@ const conditionalDisbursePath = path.join(
   ROOT,
   "programs/lending_pool/src/instructions/conditional_disburse.rs",
 );
+const initializePoolPath = path.join(
+  ROOT,
+  "programs/lending_pool/src/instructions/initialize_pool.rs",
+);
 const safetyMiddlewarePath = path.join(
   ROOT,
   "wdk-service/src/safetyMiddleware.js",
@@ -44,7 +48,9 @@ describe("SEC-02: Conditional Gate Bypass", () => {
   });
 
   it("GATE-2: collateral floor is enforced on-chain for the MVP pair", () => {
-    expect(source).to.include("let collateral_value = compute_collateral_value_usdt_6(ctx.accounts.escrow_state.collateral_amount)");
+    expect(source).to.include("pool.collateral_price_usdt_6 > 0");
+    expect(source).to.include("price_age >= 0 && price_age <= pool.max_price_age_secs");
+    expect(source).to.include("let collateral_value = compute_collateral_value_from_price_usdt_6(");
     expect(source).to.include("let minimum_collateral_value = (principal as u128)");
     expect(source).to.include("(collateral_value as u128) >= minimum_collateral_value");
   });
@@ -66,6 +72,16 @@ describe("SEC-02: Conditional Gate Bypass", () => {
     expect(gate4Index).to.be.greaterThan(-1);
     expect(transferIndex).to.be.greaterThan(-1);
     expect(gate4Index).to.be.lessThan(transferIndex);
+  });
+});
+
+describe("SEC-02B: Oracle Bootstrap Safety", () => {
+  const source = fs.readFileSync(initializePoolPath, "utf8");
+
+  it("initialize_pool starts with no seeded collateral price", () => {
+    expect(source).to.include("p.collateral_price_usdt_6 = 0;");
+    expect(source).to.include("p.collateral_price_updated_at = 0;");
+    expect(source).to.not.include("DEFAULT_XAUT_PRICE_USDT_6");
   });
 });
 

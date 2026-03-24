@@ -162,7 +162,21 @@ pub fn handler(
         ctx.accounts.escrow_state.collateral_amount > 0,
         LendError::InsufficientCollateral
     );
-    let collateral_value = compute_collateral_value_usdt_6(ctx.accounts.escrow_state.collateral_amount)
+    require!(
+        pool.collateral_price_usdt_6 > 0,
+        LendError::InvalidCollateralPrice
+    );
+    let price_age = now
+        .checked_sub(pool.collateral_price_updated_at)
+        .ok_or(LendError::Overflow)?;
+    require!(
+        price_age >= 0 && price_age <= pool.max_price_age_secs,
+        LendError::CollateralPriceStale
+    );
+    let collateral_value = compute_collateral_value_from_price_usdt_6(
+        ctx.accounts.escrow_state.collateral_amount,
+        pool.collateral_price_usdt_6,
+    )
         .ok_or(LendError::Overflow)?;
     let minimum_collateral_value = (principal as u128)
         .checked_mul(MIN_COLLATERAL_RATIO_BPS as u128)

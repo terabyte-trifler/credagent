@@ -32,6 +32,7 @@ pub fn handler(ctx: Context<InitializePool>, base_rate_bps: u16) -> Result<()> {
     let token_mint_key = ctx.accounts.token_mint.key();
     let p = &mut ctx.accounts.pool_state;
     p.authority = authority_key;
+    p.collateral_price_oracle = authority_key;
     p.token_mint = token_mint_key;
     p.total_deposited = 0;
     p.total_borrowed = 0;
@@ -42,6 +43,11 @@ pub fn handler(ctx: Context<InitializePool>, base_rate_bps: u16) -> Result<()> {
     p.next_loan_id = 1;
     p.base_rate_bps = base_rate_bps;
     p.max_utilization_bps = MAX_UTILIZATION_BPS;
+    // Start fail-closed: the oracle must publish a fresh collateral price
+    // before any loan can pass the collateral gate.
+    p.collateral_price_usdt_6 = 0;
+    p.collateral_price_updated_at = 0;
+    p.max_price_age_secs = DEFAULT_PRICE_MAX_AGE_SECS;
     p.interest_index = PRECISION; // starts at 1.0 (scaled)
     p.last_update_ts = Clock::get()?.unix_timestamp;
     p.is_paused = false;
