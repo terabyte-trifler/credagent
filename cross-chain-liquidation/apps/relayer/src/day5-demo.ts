@@ -10,6 +10,7 @@ export function buildSignedDemoIntent(nowUnixTs: number) {
     collateralToken: "0x00000000000000000000000000000000000000CC",
     approvedLiquidator: "0x00000000000000000000000000000000000000AA",
     treasurySink: "0x00000000000000000000000000000000000000BB",
+    recoverySink: "0x00000000000000000000000000000000000000BC",
     feeOverrideBps: 30,
     treasuryFeeSplitBps: 50,
   });

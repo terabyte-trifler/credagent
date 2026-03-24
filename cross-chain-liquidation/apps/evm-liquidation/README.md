@@ -6,6 +6,7 @@ Current Day 7 contents:
 
 - `contracts/LiquidationConfig.sol`
 - `contracts/LiquidationHookCore.sol`
+- `contracts/LiquidationUniV4Hook.sol`
 - `scripts/compile.js`
 - `artifacts/*.json` after build
 
@@ -24,7 +25,16 @@ Implemented in `LiquidationHookCore`:
 - approved-liquidator gate
 - max-sell cap
 - fee override lookup for hook consumers
-- treasury fee split lookup for hook consumers
+- enforced proceeds routing to treasury and recovery sinks
+- liquidation execution events with treasury sink metadata
+- stateful sell-amount consumption tracking for recovery accounting
+
+Implemented in `LiquidationUniV4Hook`:
+
+- Uniswap v4-style `beforeSwap` and `afterSwap` callback surface
+- derives `grossProceeds` from swap deltas instead of caller input
+- validates pool direction against signed collateral token and configured proceeds token
+- calls the core settlement path only after swap output is known
 
 Build:
 

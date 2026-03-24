@@ -22,6 +22,7 @@ export function toCanonicalPayloadRecord(payload: EvmLiquidationIntentPayload): 
     minimumRecoveryTarget: payload.minimumRecoveryTarget.toString(),
     nonce: payload.nonce.toString(),
     pool: payload.pool,
+    recoverySink: getAddress(payload.recoverySink).toLowerCase(),
     sourceProgram: payload.sourceProgram,
     targetChainId: payload.targetChainId.toString(),
     treasuryFeeSplitBps: payload.treasuryFeeSplitBps.toString(),

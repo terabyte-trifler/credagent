@@ -1,13 +1,31 @@
 import fs from "node:fs";
 import path from "node:path";
-import { EvmLiquidationIntentPayload, SignedEvmLiquidationIntent, SolanaLiquidationIntentReadyEvent } from "./schema";
+import {
+  EvmLiquidationExecutionEvent,
+  EvmLiquidationIntentPayload,
+  SignedEvmLiquidationIntent,
+  SolanaLiquidationIntentReadyEvent,
+} from "./schema";
 
 export type IntentLifecycleStatus =
   | "discovered"
   | "validated"
   | "submitted"
   | "dry_run"
+  | "executed"
   | "failed";
+
+export interface RecoveryRecord {
+  grossProceeds: bigint;
+  treasuryFeeAmount: bigint;
+  lenderRecoveryAmount: bigint;
+  treasurySink: string;
+  recoverySink: string;
+  recordedAt: string;
+  liquidator: string;
+  sellAmount: bigint;
+  transactionHash?: string;
+}
 
 export interface IntentLifecycleRecord {
   key: string;
@@ -21,6 +39,8 @@ export interface IntentLifecycleRecord {
   payload?: EvmLiquidationIntentPayload;
   signedIntent?: SignedEvmLiquidationIntent;
   evmTransactionHash?: string;
+  execution?: EvmLiquidationExecutionEvent;
+  recovery?: RecoveryRecord;
   errorMessage?: string;
 }
 
@@ -100,6 +120,7 @@ interface SerializedIntentLifecycleRecord {
     liquidationUrgency: EvmLiquidationIntentPayload["liquidationUrgency"];
     approvedLiquidator: string;
     treasurySink: string;
+    recoverySink: string;
     feeOverrideBps: number;
     treasuryFeeSplitBps: number;
     maxLiquidationSize: string;
@@ -116,6 +137,34 @@ interface SerializedIntentLifecycleRecord {
     signature: string;
   };
   evmTransactionHash?: string;
+  execution?: {
+    intentKey: string;
+    loanId: string;
+    pool: string;
+    borrowerId: string;
+    liquidator: string;
+    sellAmount: string;
+    grossProceeds: string;
+    treasuryFeeAmount: string;
+    lenderRecoveryAmount: string;
+    treasurySink: string;
+    recoverySink: string;
+    treasuryFeeSplitBps: number;
+    cumulativeSoldAmount: string;
+    executedAt: string;
+    transactionHash?: string;
+  };
+  recovery?: {
+    grossProceeds: string;
+    treasuryFeeAmount: string;
+    lenderRecoveryAmount: string;
+    treasurySink: string;
+    recoverySink: string;
+    recordedAt: string;
+    liquidator: string;
+    sellAmount: string;
+    transactionHash?: string;
+  };
   errorMessage?: string;
 }
 
@@ -177,6 +226,7 @@ function serializePayload(payload: EvmLiquidationIntentPayload): SerializedInten
     liquidationUrgency: payload.liquidationUrgency,
     approvedLiquidator: payload.approvedLiquidator,
     treasurySink: payload.treasurySink,
+    recoverySink: payload.recoverySink,
     feeOverrideBps: payload.feeOverrideBps,
     treasuryFeeSplitBps: payload.treasuryFeeSplitBps,
     maxLiquidationSize: payload.maxLiquidationSize.toString(),
@@ -206,6 +256,7 @@ function deserializePayload(
     liquidationUrgency: payload.liquidationUrgency,
     approvedLiquidator: payload.approvedLiquidator,
     treasurySink: payload.treasurySink,
+    recoverySink: payload.recoverySink,
     feeOverrideBps: payload.feeOverrideBps,
     treasuryFeeSplitBps: payload.treasuryFeeSplitBps,
     maxLiquidationSize: BigInt(payload.maxLiquidationSize),
@@ -237,6 +288,38 @@ function serializeRecord(record: IntentLifecycleRecord): SerializedIntentLifecyc
         }
       : undefined,
     evmTransactionHash: record.evmTransactionHash,
+    execution: record.execution
+      ? {
+          intentKey: record.execution.intentKey,
+          loanId: record.execution.loanId.toString(),
+          pool: record.execution.pool,
+          borrowerId: record.execution.borrowerId,
+          liquidator: record.execution.liquidator,
+          sellAmount: record.execution.sellAmount.toString(),
+          grossProceeds: record.execution.grossProceeds.toString(),
+          treasuryFeeAmount: record.execution.treasuryFeeAmount.toString(),
+          lenderRecoveryAmount: record.execution.lenderRecoveryAmount.toString(),
+          treasurySink: record.execution.treasurySink,
+          recoverySink: record.execution.recoverySink,
+          treasuryFeeSplitBps: record.execution.treasuryFeeSplitBps,
+          cumulativeSoldAmount: record.execution.cumulativeSoldAmount.toString(),
+          executedAt: record.execution.executedAt,
+          transactionHash: record.execution.transactionHash,
+        }
+      : undefined,
+    recovery: record.recovery
+      ? {
+          grossProceeds: record.recovery.grossProceeds.toString(),
+          treasuryFeeAmount: record.recovery.treasuryFeeAmount.toString(),
+          lenderRecoveryAmount: record.recovery.lenderRecoveryAmount.toString(),
+          treasurySink: record.recovery.treasurySink,
+          recoverySink: record.recovery.recoverySink,
+          recordedAt: record.recovery.recordedAt,
+          liquidator: record.recovery.liquidator,
+          sellAmount: record.recovery.sellAmount.toString(),
+          transactionHash: record.recovery.transactionHash,
+        }
+      : undefined,
     errorMessage: record.errorMessage,
   };
 }
@@ -264,6 +347,38 @@ function deserializeRecord(record: SerializedIntentLifecycleRecord): IntentLifec
           }
         : undefined,
     evmTransactionHash: record.evmTransactionHash,
+    execution: record.execution
+      ? {
+          intentKey: record.execution.intentKey,
+          loanId: BigInt(record.execution.loanId),
+          pool: record.execution.pool,
+          borrowerId: record.execution.borrowerId,
+          liquidator: record.execution.liquidator,
+          sellAmount: BigInt(record.execution.sellAmount),
+          grossProceeds: BigInt(record.execution.grossProceeds),
+          treasuryFeeAmount: BigInt(record.execution.treasuryFeeAmount),
+          lenderRecoveryAmount: BigInt(record.execution.lenderRecoveryAmount),
+          treasurySink: record.execution.treasurySink,
+          recoverySink: record.execution.recoverySink,
+          treasuryFeeSplitBps: record.execution.treasuryFeeSplitBps,
+          cumulativeSoldAmount: BigInt(record.execution.cumulativeSoldAmount),
+          executedAt: record.execution.executedAt,
+          transactionHash: record.execution.transactionHash,
+        }
+      : undefined,
+    recovery: record.recovery
+      ? {
+          grossProceeds: BigInt(record.recovery.grossProceeds),
+          treasuryFeeAmount: BigInt(record.recovery.treasuryFeeAmount),
+          lenderRecoveryAmount: BigInt(record.recovery.lenderRecoveryAmount),
+          treasurySink: record.recovery.treasurySink,
+          recoverySink: record.recovery.recoverySink,
+          recordedAt: record.recovery.recordedAt,
+          liquidator: record.recovery.liquidator,
+          sellAmount: BigInt(record.recovery.sellAmount),
+          transactionHash: record.recovery.transactionHash,
+        }
+      : undefined,
     errorMessage: record.errorMessage,
   };
 }

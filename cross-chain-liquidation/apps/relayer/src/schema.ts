@@ -44,6 +44,7 @@ export interface EvmLiquidationIntentPayload {
   liquidationUrgency: LiquidationUrgency;
   approvedLiquidator: string;
   treasurySink: string;
+  recoverySink: string;
   feeOverrideBps: number;
   treasuryFeeSplitBps: number;
   maxLiquidationSize: bigint;
@@ -60,6 +61,24 @@ export interface SignedEvmLiquidationIntent {
   protocolSignerId: string;
   protocolSignerAddress: string;
   signature: string;
+}
+
+export interface EvmLiquidationExecutionEvent {
+  intentKey: string;
+  loanId: bigint;
+  pool: string;
+  borrowerId: string;
+  liquidator: string;
+  sellAmount: bigint;
+  grossProceeds: bigint;
+  treasuryFeeAmount: bigint;
+  lenderRecoveryAmount: bigint;
+  treasurySink: string;
+  recoverySink: string;
+  treasuryFeeSplitBps: number;
+  cumulativeSoldAmount: bigint;
+  executedAt: string;
+  transactionHash?: string;
 }
 
 function assertPositiveAmount(name: string, value: bigint) {
@@ -103,6 +122,7 @@ export function buildEvmLiquidationIntentPayload(input: {
   collateralToken: string;
   approvedLiquidator: string;
   treasurySink: string;
+  recoverySink: string;
   feeOverrideBps: number;
   treasuryFeeSplitBps: number;
   maxLiquidationSize?: bigint;
@@ -133,6 +153,7 @@ export function buildEvmLiquidationIntentPayload(input: {
     liquidationUrgency: event.liquidationUrgency,
     approvedLiquidator: normalizeEvmAddress("approvedLiquidator", input.approvedLiquidator),
     treasurySink: normalizeEvmAddress("treasurySink", input.treasurySink),
+    recoverySink: normalizeEvmAddress("recoverySink", input.recoverySink),
     feeOverrideBps: input.feeOverrideBps,
     treasuryFeeSplitBps: input.treasuryFeeSplitBps,
     maxLiquidationSize,
@@ -141,4 +162,33 @@ export function buildEvmLiquidationIntentPayload(input: {
     targetChainId: event.targetChainId,
     sourceProgram: "lending_pool",
   };
+}
+
+export function validateEvmLiquidationExecutionEvent(event: EvmLiquidationExecutionEvent): void {
+  if (!event.intentKey.trim()) {
+    throw new Error("intentKey is required");
+  }
+  if (!event.pool.trim()) {
+    throw new Error("pool is required");
+  }
+  if (!event.borrowerId.trim()) {
+    throw new Error("borrowerId is required");
+  }
+  assertPositiveAmount("loanId", event.loanId);
+  assertPositiveAmount("sellAmount", event.sellAmount);
+  assertPositiveAmount("grossProceeds", event.grossProceeds);
+  assertPositiveAmount("lenderRecoveryAmount", event.lenderRecoveryAmount);
+  if (event.treasuryFeeAmount < 0n) {
+    throw new Error("treasuryFeeAmount cannot be negative");
+  }
+  if (event.treasuryFeeAmount + event.lenderRecoveryAmount !== event.grossProceeds) {
+    throw new Error("grossProceeds must equal treasuryFeeAmount + lenderRecoveryAmount");
+  }
+  if (event.cumulativeSoldAmount < event.sellAmount) {
+    throw new Error("cumulativeSoldAmount cannot be less than sellAmount");
+  }
+  assertBps("treasuryFeeSplitBps", event.treasuryFeeSplitBps);
+  normalizeEvmAddress("liquidator", event.liquidator);
+  normalizeEvmAddress("treasurySink", event.treasurySink);
+  normalizeEvmAddress("recoverySink", event.recoverySink);
 }

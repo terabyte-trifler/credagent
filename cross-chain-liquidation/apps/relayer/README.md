@@ -9,6 +9,7 @@ Responsibilities:
 - serialize the canonical EVM liquidation payload
 - sign and submit payloads to the EVM config contract
 - record submission and settlement lifecycle
+- persist recovery execution records for lender accounting
 
 Day 4 MVP skeleton now includes:
 
@@ -17,7 +18,7 @@ Day 4 MVP skeleton now includes:
 - `src/evmClient.ts`: EVM config-contract submission client interfaces and dry-run/http adapters
 - `src/service.ts`: relayer orchestration, validation, dedupe, and lifecycle state transitions
 - `src/logger.ts`: structured JSON logging
-- `src/store.ts`: in-memory lifecycle ledger for discovered/validated/submitted intents
+- `src/store.ts`: lifecycle ledger for discovered/submitted/executed intents plus recovery records
 
 Suggested env vars:
 
@@ -28,6 +29,7 @@ Suggested env vars:
 - `EVM_CONFIG_CONTRACT`
 - `APPROVED_LIQUIDATOR`
 - `TREASURY_SINK`
+- `RECOVERY_SINK`
 - `COLLATERAL_TOKEN`
 - `FEE_OVERRIDE_BPS`
 - `TREASURY_FEE_SPLIT_BPS`

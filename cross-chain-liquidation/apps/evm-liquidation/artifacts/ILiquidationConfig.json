@@ -10,12 +10,32 @@
           "type": "bytes32"
         }
       ],
-      "name": "getHookExecutionConfig",
+      "name": "getHookLiquidationContext",
       "outputs": [
         {
           "internalType": "bool",
           "name": "active",
           "type": "bool"
+        },
+        {
+          "internalType": "uint256",
+          "name": "loanId",
+          "type": "uint256"
+        },
+        {
+          "internalType": "string",
+          "name": "pool",
+          "type": "string"
+        },
+        {
+          "internalType": "string",
+          "name": "borrowerId",
+          "type": "string"
+        },
+        {
+          "internalType": "address",
+          "name": "collateralToken",
+          "type": "address"
         },
         {
           "internalType": "address",
@@ -40,6 +60,11 @@
         {
           "internalType": "address",
           "name": "treasurySink",
+          "type": "address"
+        },
+        {
+          "internalType": "address",
+          "name": "recoverySink",
           "type": "address"
         },
         {

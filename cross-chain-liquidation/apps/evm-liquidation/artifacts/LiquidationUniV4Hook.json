@@ -1,0 +1,724 @@
+{
+  "contractName": "LiquidationUniV4Hook",
+  "sourceName": "LiquidationUniV4Hook.sol",
+  "abi": [
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "liquidationConfig_",
+          "type": "address"
+        },
+        {
+          "internalType": "address",
+          "name": "proceedsToken_",
+          "type": "address"
+        },
+        {
+          "internalType": "address",
+          "name": "poolManager_",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "constructor"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidHookData",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidPool",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidProceedsAmount",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidSellAmount",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidSwapDirection",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidTokenAddress",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "LiquidationInactive",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "OnlyPoolManager",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "SellAmountAlreadyConsumed",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "SellAmountExceeded",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "UnauthorizedLiquidator",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "UnexpectedNonPositiveProceeds",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "UnsupportedExactOutput",
+      "type": "error"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "bytes32",
+          "name": "intentKey",
+          "type": "bytes32"
+        },
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "loanId",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "string",
+          "name": "pool",
+          "type": "string"
+        },
+        {
+          "indexed": false,
+          "internalType": "string",
+          "name": "borrowerId",
+          "type": "string"
+        },
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "liquidator",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "sellAmount",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "grossProceeds",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "treasuryFeeAmount",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "lenderRecoveryAmount",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "treasurySink",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "recoverySink",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint16",
+          "name": "treasuryFeeSplitBps",
+          "type": "uint16"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "cumulativeSoldAmount",
+          "type": "uint256"
+        }
+      ],
+      "name": "LiquidationExecutionRecorded",
+      "type": "event"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "sender",
+          "type": "address"
+        },
+        {
+          "components": [
+            {
+              "internalType": "address",
+              "name": "currency0",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "currency1",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "hooks",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "poolManager",
+              "type": "address"
+            }
+          ],
+          "internalType": "struct LiquidationUniV4Hook.PoolKey",
+          "name": "key",
+          "type": "tuple"
+        },
+        {
+          "components": [
+            {
+              "internalType": "bool",
+              "name": "zeroForOne",
+              "type": "bool"
+            },
+            {
+              "internalType": "int256",
+              "name": "amountSpecified",
+              "type": "int256"
+            },
+            {
+              "internalType": "uint160",
+              "name": "sqrtPriceLimitX96",
+              "type": "uint160"
+            }
+          ],
+          "internalType": "struct LiquidationUniV4Hook.SwapParams",
+          "name": "params",
+          "type": "tuple"
+        },
+        {
+          "components": [
+            {
+              "internalType": "int128",
+              "name": "amount0",
+              "type": "int128"
+            },
+            {
+              "internalType": "int128",
+              "name": "amount1",
+              "type": "int128"
+            }
+          ],
+          "internalType": "struct LiquidationUniV4Hook.BalanceDelta",
+          "name": "delta",
+          "type": "tuple"
+        },
+        {
+          "internalType": "bytes",
+          "name": "hookData",
+          "type": "bytes"
+        }
+      ],
+      "name": "afterSwap",
+      "outputs": [
+        {
+          "internalType": "bytes4",
+          "name": "",
+          "type": "bytes4"
+        },
+        {
+          "internalType": "int128",
+          "name": "",
+          "type": "int128"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "sender",
+          "type": "address"
+        },
+        {
+          "components": [
+            {
+              "internalType": "address",
+              "name": "currency0",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "currency1",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "hooks",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "poolManager",
+              "type": "address"
+            }
+          ],
+          "internalType": "struct LiquidationUniV4Hook.PoolKey",
+          "name": "key",
+          "type": "tuple"
+        },
+        {
+          "components": [
+            {
+              "internalType": "bool",
+              "name": "zeroForOne",
+              "type": "bool"
+            },
+            {
+              "internalType": "int256",
+              "name": "amountSpecified",
+              "type": "int256"
+            },
+            {
+              "internalType": "uint160",
+              "name": "sqrtPriceLimitX96",
+              "type": "uint160"
+            }
+          ],
+          "internalType": "struct LiquidationUniV4Hook.SwapParams",
+          "name": "params",
+          "type": "tuple"
+        },
+        {
+          "internalType": "bytes",
+          "name": "hookData",
+          "type": "bytes"
+        }
+      ],
+      "name": "beforeSwap",
+      "outputs": [
+        {
+          "internalType": "bytes4",
+          "name": "",
+          "type": "bytes4"
+        },
+        {
+          "components": [
+            {
+              "internalType": "int128",
+              "name": "amount0",
+              "type": "int128"
+            },
+            {
+              "internalType": "int128",
+              "name": "amount1",
+              "type": "int128"
+            }
+          ],
+          "internalType": "struct LiquidationUniV4Hook.BeforeSwapDelta",
+          "name": "",
+          "type": "tuple"
+        },
+        {
+          "internalType": "uint24",
+          "name": "",
+          "type": "uint24"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getHookPermissions",
+      "outputs": [
+        {
+          "components": [
+            {
+              "internalType": "bool",
+              "name": "beforeInitialize",
+              "type": "bool"
+            },
+            {
+              "internalType": "bool",
+              "name": "afterInitialize",
+              "type": "bool"
+            },
+            {
+              "internalType": "bool",
+              "name": "beforeAddLiquidity",
+              "type": "bool"
+            },
+            {
+              "internalType": "bool",
+              "name": "afterAddLiquidity",
+              "type": "bool"
+            },
+            {
+              "internalType": "bool",
+              "name": "beforeRemoveLiquidity",
+              "type": "bool"
+            },
+            {
+              "internalType": "bool",
+              "name": "afterRemoveLiquidity",
+              "type": "bool"
+            },
+            {
+              "internalType": "bool",
+              "name": "beforeSwap",
+              "type": "bool"
+            },
+            {
+              "internalType": "bool",
+              "name": "afterSwap",
+              "type": "bool"
+            },
+            {
+              "internalType": "bool",
+              "name": "beforeDonate",
+              "type": "bool"
+            },
+            {
+              "internalType": "bool",
+              "name": "afterDonate",
+              "type": "bool"
+            },
+            {
+              "internalType": "bool",
+              "name": "beforeSwapReturnDelta",
+              "type": "bool"
+            },
+            {
+              "internalType": "bool",
+              "name": "afterSwapReturnDelta",
+              "type": "bool"
+            },
+            {
+              "internalType": "bool",
+              "name": "afterAddLiquidityReturnDelta",
+              "type": "bool"
+            },
+            {
+              "internalType": "bool",
+              "name": "afterRemoveLiquidityReturnDelta",
+              "type": "bool"
+            }
+          ],
+          "internalType": "struct LiquidationUniV4Hook.HookPermissions",
+          "name": "permissions",
+          "type": "tuple"
+        }
+      ],
+      "stateMutability": "pure",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "intentKey",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "address",
+          "name": "liquidator",
+          "type": "address"
+        },
+        {
+          "internalType": "uint256",
+          "name": "sellAmount",
+          "type": "uint256"
+        }
+      ],
+      "name": "isLiquidationExecutionAllowed",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "liquidationConfig",
+      "outputs": [
+        {
+          "internalType": "contract ILiquidationConfig",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "poolManager",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "intentKey",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "address",
+          "name": "liquidator",
+          "type": "address"
+        },
+        {
+          "internalType": "uint256",
+          "name": "sellAmount",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "grossProceeds",
+          "type": "uint256"
+        }
+      ],
+      "name": "previewLiquidationSettlement",
+      "outputs": [
+        {
+          "components": [
+            {
+              "internalType": "uint256",
+              "name": "loanId",
+              "type": "uint256"
+            },
+            {
+              "internalType": "string",
+              "name": "pool",
+              "type": "string"
+            },
+            {
+              "internalType": "string",
+              "name": "borrowerId",
+              "type": "string"
+            },
+            {
+              "components": [
+                {
+                  "internalType": "bool",
+                  "name": "active",
+                  "type": "bool"
+                },
+                {
+                  "internalType": "address",
+                  "name": "approvedLiquidator",
+                  "type": "address"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "maxLiquidationSize",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint16",
+                  "name": "feeOverrideBps",
+                  "type": "uint16"
+                },
+                {
+                  "internalType": "uint16",
+                  "name": "treasuryFeeSplitBps",
+                  "type": "uint16"
+                },
+                {
+                  "internalType": "address",
+                  "name": "treasurySink",
+                  "type": "address"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "expiry",
+                  "type": "uint256"
+                }
+              ],
+              "internalType": "struct LiquidationHookCore.HookExecutionDecision",
+              "name": "decision",
+              "type": "tuple"
+            },
+            {
+              "internalType": "uint256",
+              "name": "grossProceeds",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "treasuryFeeAmount",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "lenderRecoveryAmount",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "cumulativeSoldAmount",
+              "type": "uint256"
+            },
+            {
+              "internalType": "address",
+              "name": "recoverySink",
+              "type": "address"
+            }
+          ],
+          "internalType": "struct LiquidationHookCore.LiquidationExecutionSettlement",
+          "name": "settlement",
+          "type": "tuple"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "intentKey",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "address",
+          "name": "liquidator",
+          "type": "address"
+        },
+        {
+          "internalType": "uint256",
+          "name": "sellAmount",
+          "type": "uint256"
+        }
+      ],
+      "name": "previewLiquidationSwap",
+      "outputs": [
+        {
+          "components": [
+            {
+              "internalType": "bool",
+              "name": "active",
+              "type": "bool"
+            },
+            {
+              "internalType": "address",
+              "name": "approvedLiquidator",
+              "type": "address"
+            },
+            {
+              "internalType": "uint256",
+              "name": "maxLiquidationSize",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint16",
+              "name": "feeOverrideBps",
+              "type": "uint16"
+            },
+            {
+              "internalType": "uint16",
+              "name": "treasuryFeeSplitBps",
+              "type": "uint16"
+            },
+            {
+              "internalType": "address",
+              "name": "treasurySink",
+              "type": "address"
+            },
+            {
+              "internalType": "uint256",
+              "name": "expiry",
+              "type": "uint256"
+            }
+          ],
+          "internalType": "struct LiquidationHookCore.HookExecutionDecision",
+          "name": "decision",
+          "type": "tuple"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "proceedsToken",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "",
+          "type": "bytes32"
+        }
+      ],
+      "name": "soldAmountByIntent",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    }
+  ],
+  "bytecode": "60e03461013857601f6116d638819003918201601f19168301916001600160401b0383118484101761013c578084926060946040528339810103126101385761004781610150565b61005f604061005860208501610150565b9301610150565b906001600160a01b03168015610118576080526001600160a01b038116158015610127575b6101185760a05260c052604051611571908161016582396080518181816103cd01528181610ab701528181610e8501528181610fb30152818161117901526113da015260a05181818160e901528181610364015281816108580152611324015260c05181818160a1015281816105d00152818161067e015281816107400152818161077f0152818161129001526112dc0152f35b630f58058360e11b5f5260045ffd5b506001600160a01b03821615610084565b5f80fd5b634e487b7160e01b5f52604160045260245ffd5b51906001600160a01b03821682036101385756fe6080806040526004361015610012575f80fd5b5f905f3560e01c9081631c580ad514610aa5575080633142adcd146109c95780634fbedb47146107ef578063705c6273146103005780637a867426146102ce57806396922ac2146102a5578063c4e833ce1461013c578063d9347e2514610118578063dc4c90d3146100d35763fe6339e31461008c575f80fd5b346100d057806003193601126100d0576040517f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03168152602090f35b80fd5b50346100d057806003193601126100d0576040517f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03168152602090f35b50346100d057602061013261012c36610ba9565b91610e61565b6040519015158152f35b50346100d057806003193601126100d057806101c0916101a060405161016181610c1f565b8281528260208201528260408201528260608201528260808201528260a08201528260c08201528260e082015282610100820152826101208201528261014082015282610160820152826101808201520152604051906101c082610c1f565b808252602082019181835260408101828152606082018381526080830184815260a0840185815260c085016001815260e0860190600182526101008701928884526101208801948986526101408901968a88526101608a01988b8a526101a06101808c019b8d8d52019b808d5260206040519e8f92835251151591015251151560408d015251151560608c015251151560808b015251151560a08a015251151560c089015251151560e08801525115156101008701525115156101208601525115156101408501525115156101608401525115156101808301525115156101a0820152f35b50346100d05760203660031901126100d057604060209160043581528083522054604051908152f35b50346100d05760e06102f16102e236610ba9565b916102eb610c7b565b506113ae565b6102fe6040518092610b20565bf35b50346106e9576101603660031901126106e95761031b610ae6565b9060803660231901126106e95760603660a31901126106e9576040366101031901126106e9576101443567ffffffffffffffff81116106e957610362903690600401610b7b565b7f00000000000000000000000000000000000000000000000000000000000000006001600160a01b0316939190338590036107e0576103a0916110d7565b6103a86110ff565b916103b28261115d565b604051639b1c892b60e01b8152600481018390525f816024817f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03165afa9081156106de575f916107b2575b5061040e611131565b6001600160a01b03918216911681149081610773575b6001600160a01b03610434611147565b16149081610734575b15908161072b575b5061071d5760a43580151581036106e957156106fc576101243580600f0b81036106e95761047b906104769061138e565b61151b565b925b83156106ed5761048f84828486610f76565b60a081019182518061064e575b5060c0820197885190816105a3575b50509260409792827fcec2b77f53a05ede8783c69d8251c03aa74f41e5d8a8bde02e13714a61b492f89560e06101609501918251898c528b6020528c8c20558051996020820151978d830151955190519160608401519461055161ffff608060018060a01b0360a08a0151169761010060018060a01b039101511698015116975198604061054390519d8d8f9e8f9081520190610afc565b8c810360208e015290610afc565b6001600160a01b0390991660408b015260608a0152608089015260a088015260c087015260e08601526101008501526101208401526101408301520390a381519063705c627360e01b82526020820152f35b6101008401516001600160a01b0316813b1561064a57604051630b0d9c0960e01b81526001600160a01b037f00000000000000000000000000000000000000000000000000000000000000008116600483015290911660248201526044810192909252889082908183816064810103925af1801561063f57610626575b806104ab565b610631888092610c59565b61063b575f610620565b8680fd5b6040513d8a823e3d90fd5b8980fd5b606083015160a001516001600160a01b0316893b156106e957604051630b0d9c0960e01b81526001600160a01b037f00000000000000000000000000000000000000000000000000000000000000008116600483015291909116602482015260448101919091525f81606481838d5af180156106de571561049c576106d69197505f90610c59565b5f955f61049c565b6040513d5f823e3d90fd5b5f80fd5b63e37f5e3160e01b5f5260045ffd5b6101043580600f0b81036106e957610717906104769061138e565b9261047d565b62820f3560e61b5f5260045ffd5b9050155f610445565b905061073e611131565b7f00000000000000000000000000000000000000000000000000000000000000006001600160a01b039081169116149061043d565b905061077d611147565b7f00000000000000000000000000000000000000000000000000000000000000006001600160a01b0390811691161490610424565b6107ce91503d805f833e6107c68183610c59565b810190610d83565b5050505050505093505050505f610405565b63f655705d60e01b5f5260045ffd5b346106e9576101203660031901126106e957610809610ae6565b60803660231901126106e95760603660a31901126106e9576101043567ffffffffffffffff81116106e957610842903690600401610b7b565b5f602060405161085181610bd3565b82815201527f00000000000000000000000000000000000000000000000000000000000000006001600160a01b031633036107e05761088f916110d7565b906108986110ff565b906108a28361115d565b604051633d433a1360e11b815260048101939093526001600160a01b03166024830152604482015260e081606481305afa80156106de575f9061092a575b6040516080916108ef82610bd3565b5f825261ffff606060208401925f84520151169060405192634fbedb4760e01b845251600f0b602084015251600f0b60408301526060820152f35b5060e0813d60e0116109c1575b8161094460e09383610c59565b810103126106e95760809060c06040519161095e83610c03565b61096781610cfd565b835261097560208201610d0a565b60208401526040810151604084015261099060608201610d1e565b60608401526109a0848201610d1e565b848401526109b060a08201610d0a565b60a0840152015160c08201526108e0565b3d9150610937565b346106e95760803660031901126106e9576024356001600160a01b03811681036106e957610a0a906109f9610cb1565b506064359060443590600435610f76565b60405180916020825280516020830152610a4e610a3860208301516101e06040860152610200850190610afc565b6040830151848203601f19016060860152610afc565b90610a6160608201516080850190610b20565b608081015161016084015260a081015161018084015260c08101516101a084015260e08101516101c084015261010001516001600160a01b03166101e08301520390f35b346106e9575f3660031901126106e9577f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03168152602090f35b600435906001600160a01b03821682036106e957565b805180835260209291819084018484015e5f828201840152601f01601f1916010190565b60c0809180511515845260018060a01b0360208201511660208501526040810151604085015261ffff606082015116606085015261ffff608082015116608085015260018060a01b0360a08201511660a08501520151910152565b9181601f840112156106e95782359167ffffffffffffffff83116106e957602083818601950101116106e957565b60609060031901126106e957600435906024356001600160a01b03811681036106e9579060443590565b6040810190811067ffffffffffffffff821117610bef57604052565b634e487b7160e01b5f52604160045260245ffd5b60e0810190811067ffffffffffffffff821117610bef57604052565b6101c0810190811067ffffffffffffffff821117610bef57604052565b610120810190811067ffffffffffffffff821117610bef57604052565b90601f8019910116810190811067ffffffffffffffff821117610bef57604052565b60405190610c8882610c03565b5f60c0838281528260208201528260408201528260608201528260808201528260a08201520152565b60405190610cbe82610c3c565b5f610100838281526060602082015260606040820152610cdc610c7b565b60608201528260808201528260a08201528260c08201528260e08201520152565b519081151582036106e957565b51906001600160a01b03821682036106e957565b519061ffff821682036106e957565b81601f820112156106e95780519067ffffffffffffffff8211610bef5760405192610d62601f8401601f191660200185610c59565b828452602083830101116106e957815f9260208093018386015e8301015290565b90610180828203126106e957610d9882610cfd565b92602083015192604081015167ffffffffffffffff81116106e95783610dbf918301610d2d565b9260608201519067ffffffffffffffff82116106e957610de0918301610d2d565b91610ded60808301610d0a565b91610dfa60a08201610d0a565b9160c082015191610e0d60e08201610d1e565b91610e1b6101008301610d1e565b91610e296101208201610d0a565b91610160610e3a6101408401610d0a565b92015190565b91908201809211610e4d57565b634e487b7160e01b5f52601160045260245ffd5b90918015610f6f57604051639b1c892b60e01b815260048101839052915f836024817f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03165afa9384156106de575f945f905f955f91610f3e575b5086610f34575b5085610eff575b505083610edf575b50505090565b610ef59293505f525f60205260405f2054610e40565b11155f8080610ed9565b9194506001600160a01b039091168015918215610f21575b5050925f80610ed1565b6001600160a01b03161490505f80610f17565b421095505f610eca565b9296505050610f589193503d805f833e6107c68183610c59565b9c9a9750505050509350979350509590945f610ec3565b5050505f90565b90929192610f82610cb1565b5082156110c85783610f9491836113ae565b604051639b1c892b60e01b815260048101839052909390915f836024817f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03165afa9384156106de575f955f935f935f965f98611089575b5090611009915f525f60205260405f2054610e40565b946040820151861161107a5761ffff168083029083820403610e4d5761271090049283830394838611610e4d57604051986110438a610c3c565b8952602089015260408801526060870152608086015260a085015260c084015260e08301526001600160a01b031661010082015290565b63b4d1f67160e01b5f5260045ffd5b9294509650935061100996506110aa9194503d805f833e6107c68183610c59565b509c9950509896935050505098919895909598959496979091610ff3565b636e689a2d60e01b5f5260045ffd5b90602081036110f05781602091810103126106e9573590565b636acdab4d60e11b5f5260045ffd5b60c435905f82131561112257811561111357565b6337ecb2bb60e01b5f5260045ffd5b63f820806960e01b5f5260045ffd5b6024356001600160a01b03811681036106e95790565b6044356001600160a01b03811681036106e95790565b604051639b1c892b60e01b815260048101919091525f816024817f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03165afa80156106de575f5f925f92611362575b501561135357421015611353576064356001600160a01b038116908181036106e95750301480159061130b575b61071d57602435906001600160a01b038216908183036106e9576001600160a01b03168181149190826112c2575b6044356001600160a01b038116908181036106e9575014928361128d575b5050801580611285575b61071d5780611270575b611250578061125f575b61125057565b6317c6bd3b60e11b5f5260045ffd5b5060a435801515811461124a575f80fd5b5060a435801590811581036106e95750611240565b508115611236565b507f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03161491505f8061122c565b91506044356001600160a01b038116908181036106e957507f00000000000000000000000000000000000000000000000000000000000000006001600160a01b0316149161120e565b506084356001600160a01b038116908181036106e957507f00000000000000000000000000000000000000000000000000000000000000006001600160a01b031614156111e0565b635550e12d60e01b5f5260045ffd5b91505061137991503d805f833e6107c68183610c59565b9a98505050505050509250509091905f6111b3565b600f0b6f7fffffffffffffffffffffffffffffff198114610e4d575f0390565b916113b7610c7b565b50801561111357604051639b1c892b60e01b815260048101849052905f826024817f00000000000000000000000000000000000000000000000000000000000000006001600160a01b03165afa9283156106de575f905f955f935f915f945f975f996114e2575b5015801599908a6114d8575b611353576001600160a01b031693841515908590826114c4575b50506114b5578591611460915f525f60205260405f2054610e40565b116114a65761ffff938492604051986114788a610c03565b8952602089015260408801521660608601521660808401526001600160a01b031660a083015260c082015290565b633581753960e01b5f5260045ffd5b637676c96f60e01b5f5260045ffd5b6001600160a01b031614159050845f611444565b504289111561142a565b9550509650965050925061150091503d805f833e6107c68183610c59565b9b98505097509450969099925097909895929496975f61141e565b5f81600f0b13156106ed576fffffffffffffffffffffffffffffffff169056fea2646970667358221220bdcc743b6c92a8e5f2dec72a3338effeaf8232078b39a84272375de470db9cd564736f6c63430008220033"
+}

@@ -14,6 +14,7 @@ export interface RelayerConfig {
   protocolSignerPrivateKey: string;
   approvedLiquidator: string;
   treasurySink: string;
+  recoverySink: string;
   collateralToken: string;
   feeOverrideBps: number;
   treasuryFeeSplitBps: number;
@@ -86,6 +87,7 @@ export function loadRelayerConfig(env: EnvSource): RelayerConfig {
     protocolSignerPrivateKey,
     approvedLiquidator: required(env, "APPROVED_LIQUIDATOR", "0x00000000000000000000000000000000000000AA"),
     treasurySink: required(env, "TREASURY_SINK", "0x00000000000000000000000000000000000000BB"),
+    recoverySink: required(env, "RECOVERY_SINK", "0x00000000000000000000000000000000000000BC"),
     collateralToken: required(env, "COLLATERAL_TOKEN", "0x00000000000000000000000000000000000000CC"),
     feeOverrideBps: parseInteger(env.FEE_OVERRIDE_BPS ?? "30", "FEE_OVERRIDE_BPS"),
     treasuryFeeSplitBps: parseInteger(env.TREASURY_FEE_SPLIT_BPS ?? "50", "TREASURY_FEE_SPLIT_BPS"),

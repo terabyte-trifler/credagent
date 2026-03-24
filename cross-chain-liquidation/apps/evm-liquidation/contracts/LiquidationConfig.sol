@@ -15,6 +15,7 @@ contract LiquidationConfig {
         string liquidationUrgency;
         address approvedLiquidator;
         address treasurySink;
+        address recoverySink;
         uint16 feeOverrideBps;
         uint16 treasuryFeeSplitBps;
         uint256 maxLiquidationSize;
@@ -37,6 +38,7 @@ contract LiquidationConfig {
         string liquidationUrgency;
         address approvedLiquidator;
         address treasurySink;
+        address recoverySink;
         uint16 feeOverrideBps;
         uint16 treasuryFeeSplitBps;
         uint256 maxLiquidationSize;
@@ -62,6 +64,7 @@ contract LiquidationConfig {
     error InvalidTargetChain();
     error StaleNonce();
     error InvalidTreasurySink();
+    error InvalidRecoverySink();
     error InvalidApprovedLiquidator();
     error InvalidAmount();
 
@@ -127,6 +130,7 @@ contract LiquidationConfig {
         if (payload.expiry <= block.timestamp) revert ExpiredIntent();
         if (payload.amountToLiquidate == 0 || payload.maxLiquidationSize == 0) revert InvalidAmount();
         if (payload.treasurySink == address(0)) revert InvalidTreasurySink();
+        if (payload.recoverySink == address(0)) revert InvalidRecoverySink();
         if (payload.approvedLiquidator == address(0)) revert InvalidApprovedLiquidator();
         if (bytes(payload.borrowerId).length == 0 || payload.collateralToken == address(0)) revert InvalidAmount();
         string memory derivedCanonicalPayload = _canonicalizePayload(payload);
@@ -163,6 +167,7 @@ contract LiquidationConfig {
             liquidationUrgency: payload.liquidationUrgency,
             approvedLiquidator: payload.approvedLiquidator,
             treasurySink: payload.treasurySink,
+            recoverySink: payload.recoverySink,
             feeOverrideBps: payload.feeOverrideBps,
             treasuryFeeSplitBps: payload.treasuryFeeSplitBps,
             maxLiquidationSize: payload.maxLiquidationSize,
@@ -211,6 +216,7 @@ contract LiquidationConfig {
             uint16 feeOverrideBps,
             uint16 treasuryFeeSplitBps,
             address treasurySink,
+            address recoverySink,
             uint256 expiry
         )
     {
@@ -224,6 +230,44 @@ contract LiquidationConfig {
             liquidation.feeOverrideBps,
             liquidation.treasuryFeeSplitBps,
             liquidation.treasurySink,
+            liquidation.recoverySink,
+            liquidation.expiry
+        );
+    }
+
+    function getHookLiquidationContext(bytes32 intentKey)
+        external
+        view
+        returns (
+            bool active,
+            uint256 loanId,
+            string memory pool,
+            string memory borrowerId,
+            address collateralToken,
+            address approvedLiquidator,
+            uint256 maxLiquidationSize,
+            uint16 feeOverrideBps,
+            uint16 treasuryFeeSplitBps,
+            address treasurySink,
+            address recoverySink,
+            uint256 expiry
+        )
+    {
+        ActiveLiquidation storage liquidation = activeLiquidations[intentKey];
+        return (
+            liquidation.active &&
+                liquidation.expiry > block.timestamp &&
+                latestIntentKeyByScope[liquidation.nonceScopeKey] == intentKey,
+            liquidation.loanId,
+            liquidation.pool,
+            liquidation.borrowerId,
+            liquidation.collateralToken,
+            liquidation.approvedLiquidator,
+            liquidation.maxLiquidationSize,
+            liquidation.feeOverrideBps,
+            liquidation.treasuryFeeSplitBps,
+            liquidation.treasurySink,
+            liquidation.recoverySink,
             liquidation.expiry
         );
     }
@@ -301,6 +345,7 @@ contract LiquidationConfig {
                 "minimumRecoveryTarget=", _uintToString(payload.minimumRecoveryTarget), "\n",
                 "nonce=", _uintToString(payload.nonce), "\n",
                 "pool=", payload.pool, "\n",
+                "recoverySink=", _addressToLowerHex(payload.recoverySink), "\n",
                 "sourceProgram=", payload.sourceProgram, "\n",
                 "targetChainId=", _uintToString(payload.targetChainId), "\n",
                 "treasuryFeeSplitBps=", _uintToString(payload.treasuryFeeSplitBps), "\n",

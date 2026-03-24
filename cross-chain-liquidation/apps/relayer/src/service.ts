@@ -3,7 +3,9 @@ import { EvmClient } from "./evmClient";
 import { Logger } from "./logger";
 import {
   buildEvmLiquidationIntentPayload,
+  EvmLiquidationExecutionEvent,
   SolanaLiquidationIntentReadyEvent,
+  validateEvmLiquidationExecutionEvent,
   validateSolanaLiquidationIntentReadyEvent,
 } from "./schema";
 import { signLiquidationIntent } from "./signer";
@@ -30,6 +32,14 @@ export interface RelayerRunResult {
   processed: number;
   submitted: number;
   failed: number;
+}
+
+export interface RecoveryRecordResult {
+  key: string;
+  loanId: bigint;
+  lenderRecoveryAmount: bigint;
+  treasuryFeeAmount: bigint;
+  recordedAt: string;
 }
 
 export class LiquidationRelayerService {
@@ -71,6 +81,63 @@ export class LiquidationRelayerService {
       processed: batch.events.length,
       submitted,
       failed,
+    };
+  }
+
+  public recordRecoveryExecution(event: EvmLiquidationExecutionEvent): RecoveryRecordResult {
+    validateEvmLiquidationExecutionEvent(event);
+
+    const existing = this.store.get(event.intentKey);
+    const discoveredAt = existing?.discoveredAt ?? event.executedAt;
+    const record = {
+      key: event.intentKey,
+      loanId: existing?.loanId ?? event.loanId,
+      pool: existing?.pool ?? event.pool,
+      borrower: existing?.borrower ?? event.borrowerId,
+      status: "executed" as const,
+      discoveredAt,
+      lastUpdatedAt: event.executedAt,
+      event: existing?.event,
+      payload: existing?.payload,
+      signedIntent: existing?.signedIntent,
+      evmTransactionHash: event.transactionHash ?? existing?.evmTransactionHash,
+      execution: event,
+      recovery: {
+        grossProceeds: event.grossProceeds,
+        treasuryFeeAmount: event.treasuryFeeAmount,
+        lenderRecoveryAmount: event.lenderRecoveryAmount,
+        treasurySink: event.treasurySink,
+        recoverySink: event.recoverySink,
+        recordedAt: event.executedAt,
+        liquidator: event.liquidator,
+        sellAmount: event.sellAmount,
+        transactionHash: event.transactionHash,
+      },
+      errorMessage: undefined,
+    };
+
+    this.store.upsert(record);
+    this.deps.logger.info("Recorded liquidation recovery", {
+      intentKey: event.intentKey,
+      loanId: event.loanId,
+      pool: event.pool,
+      borrowerId: event.borrowerId,
+      liquidator: event.liquidator,
+      sellAmount: event.sellAmount.toString(),
+      grossProceeds: event.grossProceeds.toString(),
+      treasuryFeeAmount: event.treasuryFeeAmount.toString(),
+      lenderRecoveryAmount: event.lenderRecoveryAmount.toString(),
+      treasurySink: event.treasurySink,
+      recoverySink: event.recoverySink,
+      transactionHash: event.transactionHash,
+    });
+
+    return {
+      key: event.intentKey,
+      loanId: record.loanId,
+      lenderRecoveryAmount: event.lenderRecoveryAmount,
+      treasuryFeeAmount: event.treasuryFeeAmount,
+      recordedAt: event.executedAt,
     };
   }
 
@@ -120,6 +187,7 @@ export class LiquidationRelayerService {
         collateralToken: this.deps.config.collateralToken,
         approvedLiquidator: this.deps.config.approvedLiquidator,
         treasurySink: this.deps.config.treasurySink,
+        recoverySink: this.deps.config.recoverySink,
         feeOverrideBps: this.deps.config.feeOverrideBps,
         treasuryFeeSplitBps: this.deps.config.treasuryFeeSplitBps,
       });
