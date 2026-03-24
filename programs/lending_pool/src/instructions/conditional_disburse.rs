@@ -162,6 +162,16 @@ pub fn handler(
         ctx.accounts.escrow_state.collateral_amount > 0,
         LendError::InsufficientCollateral
     );
+    let collateral_value = compute_collateral_value_usdt_6(ctx.accounts.escrow_state.collateral_amount)
+        .ok_or(LendError::Overflow)?;
+    let minimum_collateral_value = (principal as u128)
+        .checked_mul(MIN_COLLATERAL_RATIO_BPS as u128)
+        .and_then(|v| v.checked_div(BPS_DENOMINATOR))
+        .ok_or(LendError::Overflow)?;
+    require!(
+        (collateral_value as u128) >= minimum_collateral_value,
+        LendError::InsufficientCollateral
+    );
 
     // ════════════════════════════════════
     // GATE 3: Pool utilization below max

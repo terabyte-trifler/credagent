@@ -43,6 +43,12 @@ describe("SEC-02: Conditional Gate Bypass", () => {
     expect(source).to.include("constraint = escrow_state.borrower == borrower.key() @ LendError::InvalidScore");
   });
 
+  it("GATE-2: collateral floor is enforced on-chain for the MVP pair", () => {
+    expect(source).to.include("let collateral_value = compute_collateral_value_usdt_6(ctx.accounts.escrow_state.collateral_amount)");
+    expect(source).to.include("let minimum_collateral_value = (principal as u128)");
+    expect(source).to.include("(collateral_value as u128) >= minimum_collateral_value");
+  });
+
   it("GATE-3: utilization cap is enforced before transfer", () => {
     expect(source).to.include("require!(new_util <= pool.max_utilization_bps, LendError::UtilizationExceeded);");
     expect(source).to.include("require!(principal <= available, LendError::InsufficientLiquidity);");

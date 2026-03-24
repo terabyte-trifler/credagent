@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use anchor_spl::associated_token::get_associated_token_address;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 use crate::state::*;
 use crate::errors::LendError;
@@ -45,6 +46,7 @@ pub struct LiquidateEscrow<'info> {
         mut,
         constraint = liquidation_recipient.mint == escrow_state.collateral_mint @ LendError::MintMismatch,
         constraint = liquidation_recipient.owner == pool_state.authority @ LendError::UnauthorizedAgent,
+        constraint = liquidation_recipient.key() == get_associated_token_address(&pool_state.authority, &escrow_state.collateral_mint) @ LendError::UnauthorizedAgent,
     )]
     pub liquidation_recipient: Account<'info, TokenAccount>,
     /// Anyone can trigger (permissionless once loan is defaulted)

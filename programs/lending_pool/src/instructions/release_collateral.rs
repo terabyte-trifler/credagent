@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use anchor_spl::associated_token::get_associated_token_address;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 use crate::state::*;
 use crate::errors::LendError;
@@ -38,6 +39,8 @@ pub struct ReleaseCollateral<'info> {
     #[account(
         mut,
         constraint = borrower_ata.mint == escrow_state.collateral_mint @ LendError::MintMismatch,
+        constraint = borrower_ata.owner == borrower.key(),
+        constraint = borrower_ata.key() == get_associated_token_address(&borrower.key(), &escrow_state.collateral_mint),
     )]
     pub borrower_ata: Account<'info, TokenAccount>,
     /// CHECK: Borrower receiving collateral back.

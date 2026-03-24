@@ -28,7 +28,12 @@ import fs from 'node:fs';
 import * as anchor from '@coral-xyz/anchor';
 import BN from 'bn.js';
 import { PublicKey, Connection, Transaction } from '@solana/web3.js';
-import { Token, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } from '@solana/spl-token';
+import {
+  Token,
+  TOKEN_PROGRAM_ID,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+  getAssociatedTokenAddressSync,
+} from '@solana/spl-token';
 
 const DEFAULT_ML_API = 'http://localhost:5001';
 const DEFAULT_RATE_LIMIT = 200;
@@ -591,18 +596,6 @@ export class MCPBridge {
   }
 
   async #submitLiquidateEscrow(params) {
-    const liquidationRecipient =
-      params.liquidation_recipient ||
-      process.env.LIQUIDATION_RECIPIENT_ATA ||
-      process.env.DEPLOYER_XAUT_ATA;
-
-    if (!liquidationRecipient) {
-      return this.#buildProgramCall('liquidate_escrow', {
-        ...params,
-        note: 'No liquidation recipient configured for collateral mint',
-      });
-    }
-
     const signer = await this.#getAnchorWallet(params.agent_id);
     const program = this.#getProgram('lending_pool', signer);
     const tokenMint = new PublicKey(this.#requireEnv('MOCK_USDT_MINT'));
@@ -612,7 +605,13 @@ export class MCPBridge {
     const [loan] = PublicKey.findProgramAddressSync([Buffer.from('loan'), poolState.toBuffer(), loanSeed], program.programId);
     const [escrowState] = PublicKey.findProgramAddressSync([Buffer.from('escrow'), loanSeed], program.programId);
     const [escrowVault] = PublicKey.findProgramAddressSync([Buffer.from('escrow_vault'), loanSeed], program.programId);
-    const liquidationRecipientPk = new PublicKey(liquidationRecipient);
+    const poolStateAccount = await program.account.poolState.fetch(poolState);
+    const escrowStateAccount = await program.account.escrowVaultState.fetch(escrowState);
+    const liquidationRecipientPk = getAssociatedTokenAddressSync(
+      escrowStateAccount.collateralMint,
+      poolStateAccount.authority,
+      true,
+    );
 
     const escrowVaultInfo = await program.provider.connection.getParsedAccountInfo(escrowVault, 'confirmed');
     const recipientInfo = await program.provider.connection.getParsedAccountInfo(liquidationRecipientPk, 'confirmed');
@@ -620,7 +619,11 @@ export class MCPBridge {
     const recipientMint = recipientInfo.value?.data?.parsed?.info?.mint;
 
     if (!escrowMint || !recipientMint) {
-      throw new Error('INVALID_LIQUIDATION_RECIPIENT: unable to inspect token account mint');
+      return this.#buildProgramCall('liquidate_escrow', {
+        ...params,
+        liquidation_recipient: liquidationRecipientPk.toBase58(),
+        note: 'Protocol recovery ATA is not initialized for the collateral mint',
+      });
     }
     if (escrowMint !== recipientMint) {
       throw new Error('INVALID_LIQUIDATION_RECIPIENT: token mint mismatch');

@@ -24,6 +24,8 @@ pub const DEFAULT_INTENT_TTL_SECS: i64 = 1_800;   // 30 minutes
 pub const LIQUIDATION_PENALTY_BPS: u16 = 300;     // 3.0%
 pub const PROTOCOL_FEE_BPS: u16 = 50;             // 0.5%
 pub const EVM_TARGET_CHAIN_ID: u64 = 1;           // Ethereum mainnet semantics for MVP
+pub const MIN_COLLATERAL_RATIO_BPS: u16 = 15_000; // 150%
+pub const MVP_XAUT_PRICE_USDT_6: u64 = 2_000_000_000; // $2,000.000000 per XAUT
 /// Precision multiplier for interest index (1e18)
 pub const PRECISION: u128 = 1_000_000_000_000_000_000;
 
@@ -191,6 +193,14 @@ pub fn compute_minimum_recovery_target(debt_outstanding: u64) -> Option<u64> {
         .checked_mul(retained_bps)?
         .checked_div(BPS_DENOMINATOR)?;
     u64::try_from(recovery).ok()
+}
+
+/// Day-2 MVP collateral gate for XAUT(6) collateral against USDT(6) debt.
+pub fn compute_collateral_value_usdt_6(collateral_amount: u64) -> Option<u64> {
+    let value = (collateral_amount as u128)
+        .checked_mul(MVP_XAUT_PRICE_USDT_6 as u128)?
+        .checked_div(1_000_000)?;
+    u64::try_from(value).ok()
 }
 
 /// Pool utilization in basis points.

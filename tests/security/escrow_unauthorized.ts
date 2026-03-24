@@ -27,6 +27,7 @@ describe("SEC-01: Escrow Unauthorized Access", () => {
   it("ATK-3: release binds the escrow to the borrower", () => {
     expect(releaseSource).to.include("constraint = escrow_state.borrower == borrower.key()");
     expect(releaseSource).to.include("constraint = loan.escrow == escrow_state.key()");
+    expect(releaseSource).to.include("constraint = borrower_ata.owner == borrower.key()");
   });
 
   it("ATK-4: release transfers with PDA signer, not caller authority", () => {
@@ -47,5 +48,6 @@ describe("SEC-01: Escrow Unauthorized Access", () => {
     expect(liquidateSource).to.include("constraint = loan.pool == pool_state.key()");
     expect(liquidateSource).to.include("constraint = liquidation_recipient.mint == escrow_state.collateral_mint @ LendError::MintMismatch");
     expect(liquidateSource).to.include("constraint = liquidation_recipient.owner == pool_state.authority @ LendError::UnauthorizedAgent");
+    expect(liquidateSource).to.include("get_associated_token_address(&pool_state.authority, &escrow_state.collateral_mint)");
   });
 });
