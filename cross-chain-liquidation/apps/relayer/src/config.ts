@@ -9,6 +9,9 @@ export interface RelayerConfig {
   evmRpcUrl: string;
   evmChainId: bigint;
   evmConfigContract: string;
+  protocolSignerId: string;
+  protocolSignerAddress: string;
+  protocolSignerPrivateKey: string;
   approvedLiquidator: string;
   treasurySink: string;
   collateralToken: string;
@@ -39,6 +42,14 @@ function parseInteger(value: string, key: string): number {
   return parsed;
 }
 
+function requiredSecret(env: EnvSource, key: string): string {
+  const value = env[key];
+  if (!value) {
+    throw new Error(`Missing required secret relayer config: ${key}`);
+  }
+  return value;
+}
+
 function parseBoolean(value: string | undefined, defaultValue: boolean): boolean {
   if (value === undefined) {
     return defaultValue;
@@ -59,6 +70,8 @@ function parseEnvironment(value: string | undefined): RelayerConfig["environment
 }
 
 export function loadRelayerConfig(env: EnvSource): RelayerConfig {
+  const protocolSignerPrivateKey = requiredSecret(env, "PROTOCOL_SIGNER_PRIVATE_KEY");
+  const protocolSignerAddress = required(env, "PROTOCOL_SIGNER_ADDRESS");
   return {
     serviceName: env.RELAYER_SERVICE_NAME ?? "cross-chain-liquidation-relayer",
     environment: parseEnvironment(env.NODE_ENV),
@@ -68,6 +81,9 @@ export function loadRelayerConfig(env: EnvSource): RelayerConfig {
     evmRpcUrl: required(env, "EVM_RPC_URL", "http://127.0.0.1:8545"),
     evmChainId: BigInt(env.EVM_CHAIN_ID ?? DEMO_ASSET_PAIR.targetChainId.toString()),
     evmConfigContract: required(env, "EVM_CONFIG_CONTRACT", "0x0000000000000000000000000000000000000001"),
+    protocolSignerId: required(env, "PROTOCOL_SIGNER_ID", "protocol-signer-dev"),
+    protocolSignerAddress,
+    protocolSignerPrivateKey,
     approvedLiquidator: required(env, "APPROVED_LIQUIDATOR", "0x00000000000000000000000000000000000000AA"),
     treasurySink: required(env, "TREASURY_SINK", "0x00000000000000000000000000000000000000BB"),
     collateralToken: required(env, "COLLATERAL_TOKEN", "0x00000000000000000000000000000000000000CC"),

@@ -17,6 +17,7 @@ export * from "./evmClient";
 export * from "./logger";
 export * from "./schema";
 export * from "./service";
+export * from "./signer";
 export * from "./solanaReader";
 export * from "./store";
 
@@ -45,6 +46,7 @@ export function createRelayerServiceForEnv(env: Record<string, string | undefine
           rpcUrl: config.evmRpcUrl,
           chainId: config.evmChainId,
           configContract: config.evmConfigContract,
+          signerPrivateKey: config.protocolSignerPrivateKey,
         },
         logger.child({ component: "evm-client", mode: "submit" }),
       );

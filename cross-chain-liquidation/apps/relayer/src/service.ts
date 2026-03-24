@@ -6,9 +6,11 @@ import {
   SolanaLiquidationIntentReadyEvent,
   validateSolanaLiquidationIntentReadyEvent,
 } from "./schema";
+import { signLiquidationIntent } from "./signer";
 import { SolanaReader, SolanaReaderCursor } from "./solanaReader";
 import {
   buildIntentKey,
+  buildNonceScopeKey,
   FileBackedIntentLifecycleStore,
   InMemoryIntentLifecycleStore,
   IntentLifecycleStore,
@@ -105,6 +107,14 @@ export class LiquidationRelayerService {
         );
       }
 
+      const nonceScopeKey = buildNonceScopeKey(event);
+      const highestNonce = this.store.getHighestNonce(nonceScopeKey);
+      if (highestNonce !== undefined && event.nonce <= highestNonce) {
+        throw new Error(
+          `stale nonce: event=${event.nonce.toString()} highestSeen=${highestNonce.toString()}`,
+        );
+      }
+
       const payload = buildEvmLiquidationIntentPayload({
         event,
         collateralToken: this.deps.config.collateralToken,
@@ -113,33 +123,47 @@ export class LiquidationRelayerService {
         feeOverrideBps: this.deps.config.feeOverrideBps,
         treasuryFeeSplitBps: this.deps.config.treasuryFeeSplitBps,
       });
+      const signedIntent = signLiquidationIntent({
+        payload,
+        protocolSignerId: this.deps.config.protocolSignerId,
+        protocolSignerAddress: this.deps.config.protocolSignerAddress,
+        privateKeyHex: this.deps.config.protocolSignerPrivateKey,
+      });
 
       this.store.upsert({
         key: intentKey,
         loanId: event.loanId,
+        pool: event.pool,
         borrower: event.borrower,
         status: "validated",
         discoveredAt,
         lastUpdatedAt: new Date().toISOString(),
         event,
         payload,
+        signedIntent,
       });
 
-      const receipt = await this.deps.evmClient.submitLiquidationIntent(payload);
+      const receipt = await this.deps.evmClient.submitLiquidationIntent(signedIntent);
+      this.store.setHighestNonce(nonceScopeKey, event.nonce);
       this.store.upsert({
         key: intentKey,
         loanId: event.loanId,
+        pool: event.pool,
         borrower: event.borrower,
         status: this.deps.config.dryRun ? "dry_run" : "submitted",
         discoveredAt,
         lastUpdatedAt: receipt.submittedAt,
         event,
         payload,
+        signedIntent,
         evmTransactionHash: receipt.transactionHash,
       });
 
       logger.info("Liquidation intent relayed", {
         targetChainId: payload.targetChainId,
+        payloadHash: signedIntent.payloadHash,
+        signer: signedIntent.protocolSignerId,
+        signerAddress: signedIntent.protocolSignerAddress,
         transactionHash: receipt.transactionHash,
         dryRun: this.deps.config.dryRun,
       });
@@ -149,6 +173,7 @@ export class LiquidationRelayerService {
       this.store.upsert({
         key: intentKey,
         loanId: event.loanId,
+        pool: event.pool,
         borrower: event.borrower,
         status: "failed",
         discoveredAt,

@@ -1,3 +1,5 @@
+import { getAddress } from "ethers";
+
 export const BPS_DENOMINATOR = 10_000n;
 export const DEFAULT_INTENT_TTL_SECS = 30 * 60;
 export const EVM_ETHEREUM_MAINNET_CHAIN_ID = 1n;
@@ -31,7 +33,9 @@ export interface SolanaLiquidationIntentReadyEvent {
 
 export interface EvmLiquidationIntentPayload {
   loanId: bigint;
+  pool: string;
   borrower: string;
+  collateralMint: string;
   collateralToken: string;
   amountToLiquidate: bigint;
   debtOutstanding: bigint;
@@ -49,6 +53,15 @@ export interface EvmLiquidationIntentPayload {
   sourceProgram: "lending_pool";
 }
 
+export interface SignedEvmLiquidationIntent {
+  payload: EvmLiquidationIntentPayload;
+  canonicalPayload: string;
+  payloadHash: string;
+  protocolSignerId: string;
+  protocolSignerAddress: string;
+  signature: string;
+}
+
 function assertPositiveAmount(name: string, value: bigint) {
   if (value <= 0n) {
     throw new Error(`${name} must be greater than zero`);
@@ -58,6 +71,14 @@ function assertPositiveAmount(name: string, value: bigint) {
 function assertBps(name: string, value: number) {
   if (!Number.isInteger(value) || value < 0 || value > Number(BPS_DENOMINATOR)) {
     throw new Error(`${name} must be an integer between 0 and 10000`);
+  }
+}
+
+function normalizeEvmAddress(name: string, value: string): string {
+  try {
+    return getAddress(value);
+  } catch {
+    throw new Error(`${name} must be a valid EVM address`);
   }
 }
 
@@ -101,15 +122,17 @@ export function buildEvmLiquidationIntentPayload(input: {
 
   return {
     loanId: event.loanId,
-    borrower: event.borrower,
-    collateralToken: input.collateralToken,
+    pool: event.pool,
+    borrower: normalizeEvmAddress("borrower", event.borrower),
+    collateralMint: event.collateralMint,
+    collateralToken: normalizeEvmAddress("collateralToken", input.collateralToken),
     amountToLiquidate: event.collateralAmount,
     debtOutstanding: event.debtOutstanding,
     minimumRecoveryTarget: event.minimumRecoveryTarget,
     liquidationMode: event.liquidationMode,
     liquidationUrgency: event.liquidationUrgency,
-    approvedLiquidator: input.approvedLiquidator,
-    treasurySink: input.treasurySink,
+    approvedLiquidator: normalizeEvmAddress("approvedLiquidator", input.approvedLiquidator),
+    treasurySink: normalizeEvmAddress("treasurySink", input.treasurySink),
     feeOverrideBps: input.feeOverrideBps,
     treasuryFeeSplitBps: input.treasuryFeeSplitBps,
     maxLiquidationSize,

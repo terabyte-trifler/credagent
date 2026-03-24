@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { EvmLiquidationIntentPayload, SolanaLiquidationIntentReadyEvent } from "./schema";
+import { EvmLiquidationIntentPayload, SignedEvmLiquidationIntent, SolanaLiquidationIntentReadyEvent } from "./schema";
 
 export type IntentLifecycleStatus =
   | "discovered"
@@ -12,12 +12,14 @@ export type IntentLifecycleStatus =
 export interface IntentLifecycleRecord {
   key: string;
   loanId: bigint;
+  pool?: string;
   borrower: string;
   status: IntentLifecycleStatus;
   discoveredAt: string;
   lastUpdatedAt: string;
   event?: SolanaLiquidationIntentReadyEvent;
   payload?: EvmLiquidationIntentPayload;
+  signedIntent?: SignedEvmLiquidationIntent;
   evmTransactionHash?: string;
   errorMessage?: string;
 }
@@ -27,10 +29,13 @@ export interface IntentLifecycleStore {
   get(key: string): IntentLifecycleRecord | undefined;
   has(key: string): boolean;
   list(): IntentLifecycleRecord[];
+  getHighestNonce(scopeKey: string): bigint | undefined;
+  setHighestNonce(scopeKey: string, nonce: bigint): void;
 }
 
 export class InMemoryIntentLifecycleStore implements IntentLifecycleStore {
   private readonly records = new Map<string, IntentLifecycleRecord>();
+  private readonly nonceWatermarks = new Map<string, bigint>();
 
   public upsert(record: IntentLifecycleRecord): void {
     this.records.set(record.key, record);
@@ -47,11 +52,23 @@ export class InMemoryIntentLifecycleStore implements IntentLifecycleStore {
   public list(): IntentLifecycleRecord[] {
     return [...this.records.values()];
   }
+
+  public getHighestNonce(scopeKey: string): bigint | undefined {
+    return this.nonceWatermarks.get(scopeKey);
+  }
+
+  public setHighestNonce(scopeKey: string, nonce: bigint): void {
+    const current = this.nonceWatermarks.get(scopeKey);
+    if (current === undefined || nonce > current) {
+      this.nonceWatermarks.set(scopeKey, nonce);
+    }
+  }
 }
 
 interface SerializedIntentLifecycleRecord {
   key: string;
   loanId: string;
+  pool?: string;
   borrower: string;
   status: IntentLifecycleStatus;
   discoveredAt: string;
@@ -72,7 +89,9 @@ interface SerializedIntentLifecycleRecord {
   };
   payload?: {
     loanId: string;
+    pool: string;
     borrower: string;
+    collateralMint: string;
     collateralToken: string;
     amountToLiquidate: string;
     debtOutstanding: string;
@@ -89,8 +108,20 @@ interface SerializedIntentLifecycleRecord {
     targetChainId: string;
     sourceProgram: "lending_pool";
   };
+  signedIntent?: {
+    canonicalPayload: string;
+    payloadHash: string;
+    protocolSignerId: string;
+    protocolSignerAddress: string;
+    signature: string;
+  };
   evmTransactionHash?: string;
   errorMessage?: string;
+}
+
+interface SerializedStoreSnapshot {
+  records: SerializedIntentLifecycleRecord[];
+  nonceWatermarks: Record<string, string>;
 }
 
 function serializeEvent(event: SolanaLiquidationIntentReadyEvent): SerializedIntentLifecycleRecord["event"] {
@@ -135,7 +166,9 @@ function deserializeEvent(
 function serializePayload(payload: EvmLiquidationIntentPayload): SerializedIntentLifecycleRecord["payload"] {
   return {
     loanId: payload.loanId.toString(),
+    pool: payload.pool,
     borrower: payload.borrower,
+    collateralMint: payload.collateralMint,
     collateralToken: payload.collateralToken,
     amountToLiquidate: payload.amountToLiquidate.toString(),
     debtOutstanding: payload.debtOutstanding.toString(),
@@ -162,7 +195,9 @@ function deserializePayload(
   }
   return {
     loanId: BigInt(payload.loanId),
+    pool: payload.pool,
     borrower: payload.borrower,
+    collateralMint: payload.collateralMint,
     collateralToken: payload.collateralToken,
     amountToLiquidate: BigInt(payload.amountToLiquidate),
     debtOutstanding: BigInt(payload.debtOutstanding),
@@ -185,12 +220,22 @@ function serializeRecord(record: IntentLifecycleRecord): SerializedIntentLifecyc
   return {
     key: record.key,
     loanId: record.loanId.toString(),
+    pool: record.pool,
     borrower: record.borrower,
     status: record.status,
     discoveredAt: record.discoveredAt,
     lastUpdatedAt: record.lastUpdatedAt,
     event: record.event ? serializeEvent(record.event) : undefined,
     payload: record.payload ? serializePayload(record.payload) : undefined,
+    signedIntent: record.signedIntent
+      ? {
+          canonicalPayload: record.signedIntent.canonicalPayload,
+          payloadHash: record.signedIntent.payloadHash,
+          protocolSignerId: record.signedIntent.protocolSignerId,
+          protocolSignerAddress: record.signedIntent.protocolSignerAddress,
+          signature: record.signedIntent.signature,
+        }
+      : undefined,
     evmTransactionHash: record.evmTransactionHash,
     errorMessage: record.errorMessage,
   };
@@ -200,12 +245,24 @@ function deserializeRecord(record: SerializedIntentLifecycleRecord): IntentLifec
   return {
     key: record.key,
     loanId: BigInt(record.loanId),
+    pool: record.pool,
     borrower: record.borrower,
     status: record.status,
     discoveredAt: record.discoveredAt,
     lastUpdatedAt: record.lastUpdatedAt,
     event: deserializeEvent(record.event),
     payload: deserializePayload(record.payload),
+    signedIntent:
+      record.signedIntent && deserializePayload(record.payload)
+        ? {
+            payload: deserializePayload(record.payload)!,
+            canonicalPayload: record.signedIntent.canonicalPayload,
+            payloadHash: record.signedIntent.payloadHash,
+            protocolSignerId: record.signedIntent.protocolSignerId,
+            protocolSignerAddress: record.signedIntent.protocolSignerAddress,
+            signature: record.signedIntent.signature,
+          }
+        : undefined,
     evmTransactionHash: record.evmTransactionHash,
     errorMessage: record.errorMessage,
   };
@@ -235,6 +292,15 @@ export class FileBackedIntentLifecycleStore implements IntentLifecycleStore {
     return this.memory.list();
   }
 
+  public getHighestNonce(scopeKey: string): bigint | undefined {
+    return this.memory.getHighestNonce(scopeKey);
+  }
+
+  public setHighestNonce(scopeKey: string, nonce: bigint): void {
+    this.memory.setHighestNonce(scopeKey, nonce);
+    this.persist();
+  }
+
   private loadFromDisk(): void {
     if (!fs.existsSync(this.filePath)) {
       return;
@@ -243,18 +309,48 @@ export class FileBackedIntentLifecycleStore implements IntentLifecycleStore {
     if (!raw.trim()) {
       return;
     }
-    const parsed = JSON.parse(raw) as SerializedIntentLifecycleRecord[];
-    for (const record of parsed) {
+    const parsed = JSON.parse(raw) as SerializedStoreSnapshot | SerializedIntentLifecycleRecord[];
+    const records = Array.isArray(parsed) ? parsed : parsed.records;
+    for (const record of records) {
       this.memory.upsert(deserializeRecord(record));
+    }
+    if (!Array.isArray(parsed)) {
+      for (const [scopeKey, nonce] of Object.entries(parsed.nonceWatermarks)) {
+        this.memory.setHighestNonce(scopeKey, BigInt(nonce));
+      }
     }
   }
 
   private persist(): void {
     const directory = path.dirname(this.filePath);
     fs.mkdirSync(directory, { recursive: true });
-    const serialized = this.memory.list().map(serializeRecord);
-    fs.writeFileSync(this.filePath, JSON.stringify(serialized, null, 2));
+    const snapshot: SerializedStoreSnapshot = {
+      records: this.memory.list().map(serializeRecord),
+      nonceWatermarks: {},
+    };
+    const watermarks: Record<string, string> = {};
+    for (const record of this.memory.list()) {
+      if (record.event) {
+        const scopeKey = buildNonceScopeKey(record.event);
+        const nonce = this.memory.getHighestNonce(scopeKey);
+        if (nonce !== undefined) {
+          watermarks[scopeKey] = nonce.toString();
+        }
+      }
+    }
+    snapshot.nonceWatermarks = watermarks;
+    fs.writeFileSync(this.filePath, JSON.stringify(snapshot, null, 2));
   }
+}
+
+export function buildNonceScopeKey(
+  event: Pick<SolanaLiquidationIntentReadyEvent, "loanId" | "pool" | "targetChainId">,
+): string {
+  return [
+    event.targetChainId.toString(),
+    event.pool,
+    event.loanId.toString(),
+  ].join(":");
 }
 
 export function buildIntentKey(
