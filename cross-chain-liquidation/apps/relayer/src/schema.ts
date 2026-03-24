@@ -34,7 +34,7 @@ export interface SolanaLiquidationIntentReadyEvent {
 export interface EvmLiquidationIntentPayload {
   loanId: bigint;
   pool: string;
-  borrower: string;
+  borrowerId: string;
   collateralMint: string;
   collateralToken: string;
   amountToLiquidate: bigint;
@@ -123,7 +123,7 @@ export function buildEvmLiquidationIntentPayload(input: {
   return {
     loanId: event.loanId,
     pool: event.pool,
-    borrower: normalizeEvmAddress("borrower", event.borrower),
+    borrowerId: event.borrower,
     collateralMint: event.collateralMint,
     collateralToken: normalizeEvmAddress("collateralToken", input.collateralToken),
     amountToLiquidate: event.collateralAmount,

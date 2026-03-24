@@ -3,16 +3,17 @@ const path = require("node:path");
 const solc = require("solc");
 
 const root = path.resolve(__dirname, "..");
-const contractPath = path.join(root, "contracts", "LiquidationConfig.sol");
-const source = fs.readFileSync(contractPath, "utf8");
+const contractsDir = path.join(root, "contracts");
+const sources = Object.fromEntries(
+  fs
+    .readdirSync(contractsDir)
+    .filter((file) => file.endsWith(".sol"))
+    .map((file) => [file, { content: fs.readFileSync(path.join(contractsDir, file), "utf8") }]),
+);
 
 const input = {
   language: "Solidity",
-  sources: {
-    "LiquidationConfig.sol": {
-      content: source,
-    },
-  },
+  sources,
   settings: {
     optimizer: {
       enabled: true,
@@ -39,20 +40,24 @@ if (output.errors) {
   }
 }
 
-const contract = output.contracts["LiquidationConfig.sol"]["LiquidationConfig"];
 const artifactsDir = path.join(root, "artifacts");
 fs.mkdirSync(artifactsDir, { recursive: true });
-fs.writeFileSync(
-  path.join(artifactsDir, "LiquidationConfig.json"),
-  JSON.stringify(
-    {
-      contractName: "LiquidationConfig",
-      abi: contract.abi,
-      bytecode: contract.evm.bytecode.object,
-    },
-    null,
-    2,
-  ),
-);
+for (const [sourceName, contracts] of Object.entries(output.contracts)) {
+  for (const [contractName, contract] of Object.entries(contracts)) {
+    fs.writeFileSync(
+      path.join(artifactsDir, `${contractName}.json`),
+      JSON.stringify(
+        {
+          contractName,
+          sourceName,
+          abi: contract.abi,
+          bytecode: contract.evm.bytecode.object,
+        },
+        null,
+        2,
+      ),
+    );
+  }
+}
 
-console.log("Compiled LiquidationConfig");
+console.log(`Compiled ${Object.keys(output.contracts).length} Solidity source files`);

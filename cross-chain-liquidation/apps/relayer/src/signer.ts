@@ -9,7 +9,7 @@ export function toCanonicalPayloadRecord(payload: EvmLiquidationIntentPayload): 
   return {
     amountToLiquidate: payload.amountToLiquidate.toString(),
     approvedLiquidator: getAddress(payload.approvedLiquidator).toLowerCase(),
-    borrower: getAddress(payload.borrower).toLowerCase(),
+    borrowerId: payload.borrowerId,
     collateralMint: payload.collateralMint,
     collateralToken: getAddress(payload.collateralToken).toLowerCase(),
     debtOutstanding: payload.debtOutstanding.toString(),

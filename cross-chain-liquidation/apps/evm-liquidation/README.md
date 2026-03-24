@@ -2,11 +2,12 @@
 
 This app will contain the EVM-side liquidation execution layer.
 
-Current Day 6 contents:
+Current Day 7 contents:
 
 - `contracts/LiquidationConfig.sol`
+- `contracts/LiquidationHookCore.sol`
 - `scripts/compile.js`
-- `artifacts/LiquidationConfig.json` after build
+- `artifacts/*.json` after build
 
 Implemented in `LiquidationConfig`:
 
@@ -16,6 +17,14 @@ Implemented in `LiquidationConfig`:
 - replay-safe nonce scope tracking
 - expiry-aware active checks
 - getter methods for hook execution config
+
+Implemented in `LiquidationHookCore`:
+
+- active liquidation check
+- approved-liquidator gate
+- max-sell cap
+- fee override lookup for hook consumers
+- treasury fee split lookup for hook consumers
 
 Build:
 

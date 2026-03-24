@@ -19,7 +19,7 @@ export interface EvmClientConfig {
 }
 
 const LIQUIDATION_CONFIG_ABI = [
-  "function submitLiquidationIntent((uint256 loanId,string pool,address borrower,string collateralMint,address collateralToken,uint256 amountToLiquidate,uint256 debtOutstanding,uint256 minimumRecoveryTarget,string liquidationMode,string liquidationUrgency,address approvedLiquidator,address treasurySink,uint16 feeOverrideBps,uint16 treasuryFeeSplitBps,uint256 maxLiquidationSize,uint256 expiry,uint256 nonce,uint256 targetChainId,string sourceProgram) payload,string canonicalPayload,bytes32 payloadHash,string protocolSignerId,address protocolSignerAddress,bytes signature) returns (bytes32)",
+  "function submitLiquidationIntent((uint256 loanId,string pool,string borrowerId,string collateralMint,address collateralToken,uint256 amountToLiquidate,uint256 debtOutstanding,uint256 minimumRecoveryTarget,string liquidationMode,string liquidationUrgency,address approvedLiquidator,address treasurySink,uint16 feeOverrideBps,uint16 treasuryFeeSplitBps,uint256 maxLiquidationSize,uint256 expiry,uint256 nonce,uint256 targetChainId,string sourceProgram) payload,string canonicalPayload,bytes32 payloadHash,string protocolSignerId,address protocolSignerAddress,bytes signature) returns (bytes32)",
 ] as const;
 
 export class DryRunEvmClient implements EvmClient {
@@ -67,7 +67,7 @@ export class HttpEvmClient implements EvmClient {
       {
         loanId: intent.payload.loanId,
         pool: intent.payload.pool,
-        borrower: intent.payload.borrower,
+        borrowerId: intent.payload.borrowerId,
         collateralMint: intent.payload.collateralMint,
         collateralToken: intent.payload.collateralToken,
         amountToLiquidate: intent.payload.amountToLiquidate,

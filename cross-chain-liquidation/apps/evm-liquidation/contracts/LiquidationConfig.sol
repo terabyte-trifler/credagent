@@ -5,7 +5,7 @@ contract LiquidationConfig {
     struct LiquidationPayload {
         uint256 loanId;
         string pool;
-        address borrower;
+        string borrowerId;
         string collateralMint;
         address collateralToken;
         uint256 amountToLiquidate;
@@ -27,7 +27,7 @@ contract LiquidationConfig {
     struct ActiveLiquidation {
         uint256 loanId;
         string pool;
-        address borrower;
+        string borrowerId;
         string collateralMint;
         address collateralToken;
         uint256 amountToLiquidate;
@@ -48,6 +48,7 @@ contract LiquidationConfig {
         string canonicalPayload;
         string protocolSignerId;
         address protocolSignerAddress;
+        bytes32 nonceScopeKey;
         bool active;
     }
 
@@ -82,6 +83,7 @@ contract LiquidationConfig {
     mapping(address => bool) public authorizedSigners;
     mapping(bytes32 => ActiveLiquidation) private activeLiquidations;
     mapping(bytes32 => uint256) public lastNonceByScope;
+    mapping(bytes32 => bytes32) public latestIntentKeyByScope;
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert UnauthorizedUpdater();
@@ -126,7 +128,7 @@ contract LiquidationConfig {
         if (payload.amountToLiquidate == 0 || payload.maxLiquidationSize == 0) revert InvalidAmount();
         if (payload.treasurySink == address(0)) revert InvalidTreasurySink();
         if (payload.approvedLiquidator == address(0)) revert InvalidApprovedLiquidator();
-        if (payload.borrower == address(0) || payload.collateralToken == address(0)) revert InvalidAmount();
+        if (bytes(payload.borrowerId).length == 0 || payload.collateralToken == address(0)) revert InvalidAmount();
         string memory derivedCanonicalPayload = _canonicalizePayload(payload);
         if (keccak256(bytes(canonicalPayload)) != keccak256(bytes(derivedCanonicalPayload))) {
             revert CanonicalPayloadMismatch();
@@ -141,12 +143,17 @@ contract LiquidationConfig {
         if (recoveredSigner != protocolSignerAddress) revert InvalidSigner();
 
         intentKey = computeIntentKey(payload.targetChainId, payload.pool, payload.loanId, payload.nonce);
+        bytes32 previousIntentKey = latestIntentKeyByScope[nonceScopeKey];
+        if (previousIntentKey != bytes32(0)) {
+            activeLiquidations[previousIntentKey].active = false;
+        }
         lastNonceByScope[nonceScopeKey] = payload.nonce;
+        latestIntentKeyByScope[nonceScopeKey] = intentKey;
 
         activeLiquidations[intentKey] = ActiveLiquidation({
             loanId: payload.loanId,
             pool: payload.pool,
-            borrower: payload.borrower,
+            borrowerId: payload.borrowerId,
             collateralMint: payload.collateralMint,
             collateralToken: payload.collateralToken,
             amountToLiquidate: payload.amountToLiquidate,
@@ -167,6 +174,7 @@ contract LiquidationConfig {
             canonicalPayload: canonicalPayload,
             protocolSignerId: protocolSignerId,
             protocolSignerAddress: protocolSignerAddress,
+            nonceScopeKey: nonceScopeKey,
             active: true
         });
 
@@ -183,7 +191,10 @@ contract LiquidationConfig {
 
     function isLiquidationActive(bytes32 intentKey) public view returns (bool) {
         ActiveLiquidation storage liquidation = activeLiquidations[intentKey];
-        return liquidation.active && liquidation.expiry > block.timestamp;
+        return
+            liquidation.active &&
+            liquidation.expiry > block.timestamp &&
+            latestIntentKeyByScope[liquidation.nonceScopeKey] == intentKey;
     }
 
     function getActiveLiquidation(bytes32 intentKey) external view returns (ActiveLiquidation memory) {
@@ -205,7 +216,9 @@ contract LiquidationConfig {
     {
         ActiveLiquidation storage liquidation = activeLiquidations[intentKey];
         return (
-            liquidation.active && liquidation.expiry > block.timestamp,
+            liquidation.active &&
+                liquidation.expiry > block.timestamp &&
+                latestIntentKeyByScope[liquidation.nonceScopeKey] == intentKey,
             liquidation.approvedLiquidator,
             liquidation.maxLiquidationSize,
             liquidation.feeOverrideBps,
@@ -275,7 +288,7 @@ contract LiquidationConfig {
             abi.encodePacked(
                 "amountToLiquidate=", _uintToString(payload.amountToLiquidate), "\n",
                 "approvedLiquidator=", _addressToLowerHex(payload.approvedLiquidator), "\n",
-                "borrower=", _addressToLowerHex(payload.borrower), "\n",
+                "borrowerId=", payload.borrowerId, "\n",
                 "collateralMint=", payload.collateralMint, "\n",
                 "collateralToken=", _addressToLowerHex(payload.collateralToken), "\n",
                 "debtOutstanding=", _uintToString(payload.debtOutstanding), "\n",

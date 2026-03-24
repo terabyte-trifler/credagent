@@ -1,0 +1,56 @@
+{
+  "contractName": "ILiquidationConfig",
+  "sourceName": "LiquidationHookCore.sol",
+  "abi": [
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "intentKey",
+          "type": "bytes32"
+        }
+      ],
+      "name": "getHookExecutionConfig",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "active",
+          "type": "bool"
+        },
+        {
+          "internalType": "address",
+          "name": "approvedLiquidator",
+          "type": "address"
+        },
+        {
+          "internalType": "uint256",
+          "name": "maxLiquidationSize",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint16",
+          "name": "feeOverrideBps",
+          "type": "uint16"
+        },
+        {
+          "internalType": "uint16",
+          "name": "treasuryFeeSplitBps",
+          "type": "uint16"
+        },
+        {
+          "internalType": "address",
+          "name": "treasurySink",
+          "type": "address"
+        },
+        {
+          "internalType": "uint256",
+          "name": "expiry",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    }
+  ],
+  "bytecode": ""
+}

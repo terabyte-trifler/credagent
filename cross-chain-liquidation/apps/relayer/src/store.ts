@@ -90,7 +90,7 @@ interface SerializedIntentLifecycleRecord {
   payload?: {
     loanId: string;
     pool: string;
-    borrower: string;
+    borrowerId: string;
     collateralMint: string;
     collateralToken: string;
     amountToLiquidate: string;
@@ -167,7 +167,7 @@ function serializePayload(payload: EvmLiquidationIntentPayload): SerializedInten
   return {
     loanId: payload.loanId.toString(),
     pool: payload.pool,
-    borrower: payload.borrower,
+    borrowerId: payload.borrowerId,
     collateralMint: payload.collateralMint,
     collateralToken: payload.collateralToken,
     amountToLiquidate: payload.amountToLiquidate.toString(),
@@ -196,7 +196,7 @@ function deserializePayload(
   return {
     loanId: BigInt(payload.loanId),
     pool: payload.pool,
-    borrower: payload.borrower,
+    borrowerId: payload.borrowerId,
     collateralMint: payload.collateralMint,
     collateralToken: payload.collateralToken,
     amountToLiquidate: BigInt(payload.amountToLiquidate),
