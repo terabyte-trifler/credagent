@@ -1,0 +1,26 @@
+{
+  "anvilRpcUrl": "http://127.0.0.1:9645",
+  "configAddress": "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9",
+  "hookAddress": "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9",
+  "scenarios": [
+    {
+      "name": "unauthorized-liquidator",
+      "expectedFailure": true,
+      "passed": true,
+      "detail": "UnauthorizedLiquidator"
+    },
+    {
+      "name": "expired-intent",
+      "expectedFailure": true,
+      "passed": true,
+      "detail": "LiquidationInactive"
+    },
+    {
+      "name": "sell-cap-overflow",
+      "expectedFailure": true,
+      "passed": true,
+      "detail": "SellAmountExceeded"
+    }
+  ],
+  "outputPath": "/Users/terabyte_trifler/Documents/credagent/cross-chain-liquidation/scripts/demo/day10-hardening-output.json"
+}

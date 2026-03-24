@@ -10,6 +10,25 @@ The system is split into three apps:
 - `apps/relayer`
 - `apps/evm-liquidation`
 
+## Architecture diagram
+
+```mermaid
+flowchart LR
+    B["Borrower on Solana"] --> S["CredAgent LendingPool"]
+    S --> E["Escrow PDA (XAUT collateral)"]
+    S --> D["Installment / Default State"]
+    D --> C["Collection Agent"]
+    C --> I["LiquidationIntentReady"]
+    I --> R["Cross-chain Relayer"]
+    R --> LC["EVM LiquidationConfig"]
+    LC --> H["Uniswap v4 Liquidation Hook"]
+    H --> P["WXAUT / USDT Pool"]
+    P --> L["Approved Liquidators"]
+    H --> T["Treasury Sink"]
+    H --> RS["Recovery Sink"]
+    RS --> RL["Lender Recovery Ledger"]
+```
+
 ## Happy path
 
 1. Borrower takes a USDT loan on Solana and posts XAUT collateral.
@@ -21,7 +40,9 @@ The system is split into three apps:
 7. Relayer reads the event and builds a signed EVM liquidation payload.
 8. EVM `LiquidationConfig` stores the active liquidation.
 9. Uniswap v4 hook activates liquidation mode for the `WXAUT/USDT` pool.
-10. Approved liquidator buys collateral and sends proceeds to the recovery sink.
+10. Approved liquidator executes a hook-gated swap in `WXAUT/USDT`.
+11. Hook derives proceeds from callback deltas and routes treasury and recovery amounts on EVM.
+12. Relayer records execution for lender recovery accounting.
 
 ## Demo pair
 
@@ -50,14 +71,16 @@ Owns:
 - payload validation
 - signer flow
 - EVM config submission
+- recovery recording
 
 ### `apps/evm-liquidation`
 
 Owns:
 
 - config contract
-- v4 hook
+- callback-driven v4 hook
 - liquidation execution controls
+- treasury and recovery settlement
 
 ## Canonical event shape
 
@@ -74,13 +97,16 @@ liquidation_urgency
 intent_expiry
 nonce
 target_chain_id
+source_program
 ```
 
 ## Canonical EVM payload
 
 ```text
 loan_id
-borrower
+pool
+borrower_id
+collateral_mint
 collateral_token
 amount_to_liquidate
 debt_outstanding
@@ -89,6 +115,7 @@ liquidation_mode
 liquidation_urgency
 approved_liquidator
 treasury_sink
+recovery_sink
 fee_override_bps
 treasury_fee_split_bps
 max_liquidation_size
@@ -102,7 +129,22 @@ source_program
 
 - one collateral asset
 - one relayer
-- one active liquidation at a time
+- one active liquidation per `(target_chain_id, pool, loan_id)` scope
 - no bridge-back
 - no auctions
 - no multi-asset support
+
+## Local demo status
+
+Implemented:
+
+- Day 9 happy-path demo in `apps/relayer/src/day9-local-demo.ts`
+- Day 10 hardening demo in `apps/relayer/src/day10-hardening-demo.ts`
+- callback-based `LiquidationUniV4Hook` using swap deltas instead of caller-supplied proceeds
+- treasury sink plus recovery sink settlement on the EVM side
+
+Still mocked for MVP:
+
+- Solana event ingestion uses a static local event fixture in demo mode
+- pool-manager integration uses a local mock instead of the full production Uniswap v4 package
+- bridge-back to Solana is recorded in ledger terms, not executed
