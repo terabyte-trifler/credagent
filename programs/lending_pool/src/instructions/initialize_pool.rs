@@ -19,6 +19,7 @@ pub struct InitializePool<'info> {
     )]
     pub pool_vault: Account<'info, TokenAccount>,
     pub token_mint: Account<'info, Mint>,
+    pub collateral_mint: Account<'info, Mint>,
     #[account(mut)]
     pub authority: Signer<'info>,
     pub system_program: Program<'info, System>,
@@ -30,10 +31,12 @@ pub fn handler(ctx: Context<InitializePool>, base_rate_bps: u16) -> Result<()> {
     let pool_key = ctx.accounts.pool_state.key();
     let authority_key = ctx.accounts.authority.key();
     let token_mint_key = ctx.accounts.token_mint.key();
+    let collateral_mint_key = ctx.accounts.collateral_mint.key();
     let p = &mut ctx.accounts.pool_state;
     p.authority = authority_key;
     p.collateral_price_oracle = authority_key;
     p.token_mint = token_mint_key;
+    p.collateral_mint = collateral_mint_key;
     p.total_deposited = 0;
     p.total_borrowed = 0;
     p.total_interest_earned = 0;

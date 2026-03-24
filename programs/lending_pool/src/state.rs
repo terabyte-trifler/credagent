@@ -66,6 +66,7 @@ pub struct PoolState {
     pub authority: Pubkey,
     pub collateral_price_oracle: Pubkey,
     pub token_mint: Pubkey,
+    pub collateral_mint: Pubkey,
     pub total_deposited: u64,
     pub total_borrowed: u64,
     pub total_interest_earned: u64,

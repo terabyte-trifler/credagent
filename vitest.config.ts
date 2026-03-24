@@ -8,6 +8,7 @@ export default defineConfig({
       'tests/integration/01_golden_path.ts',
       'tests/integration/02_default_path.ts',
       'tests/integration/03_to_08_scenarios.ts',
+      'tests/integration/09_liquidation_intent_event.ts',
       'tests/security/attack_vectors.ts',
       'tests/security/escrow_unauthorized.ts',
     ],

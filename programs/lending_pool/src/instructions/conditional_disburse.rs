@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use anchor_spl::associated_token::get_associated_token_address;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 use agent_permissions::{self, AgentIdentity, AgentRole, PermState, PermissionTier};
 use crate::state::*;
@@ -64,6 +65,7 @@ pub struct ConditionalDisburse<'info> {
         mut,
         constraint = escrow_state.borrower == borrower.key() @ LendError::InvalidScore,
         constraint = escrow_state.status == EscrowStatus::Locked @ LendError::EscrowNotLocked,
+        constraint = escrow_state.loan_id == pool_state.next_loan_id @ LendError::LoanIdMismatch,
     )]
     pub escrow_state: Account<'info, EscrowVaultState>,
 
@@ -79,6 +81,8 @@ pub struct ConditionalDisburse<'info> {
     #[account(
         mut,
         constraint = borrower_ata.mint == pool_state.token_mint @ LendError::MintMismatch,
+        constraint = borrower_ata.owner == borrower.key(),
+        constraint = borrower_ata.key() == get_associated_token_address(&borrower.key(), &pool_state.token_mint) @ LendError::UnauthorizedAgent,
     )]
     pub borrower_ata: Account<'info, TokenAccount>,
 
@@ -161,6 +165,10 @@ pub fn handler(
     require!(
         ctx.accounts.escrow_state.collateral_amount > 0,
         LendError::InsufficientCollateral
+    );
+    require!(
+        ctx.accounts.escrow_state.collateral_mint == pool.collateral_mint,
+        LendError::MintMismatch
     );
     require!(
         pool.collateral_price_usdt_6 > 0,

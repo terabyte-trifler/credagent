@@ -38,6 +38,7 @@ pub struct LockCollateral<'info> {
         token::authority = escrow_state, // AUDIT: PDA-owned, not EOA
     )]
     pub escrow_vault: Account<'info, TokenAccount>,
+    #[account(constraint = collateral_mint.key() == pool_state.collateral_mint @ LendError::MintMismatch)]
     pub collateral_mint: Account<'info, Mint>,
     #[account(
         mut,

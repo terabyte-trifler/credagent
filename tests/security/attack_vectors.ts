@@ -45,14 +45,21 @@ describe("SEC-02: Conditional Gate Bypass", () => {
   it("GATE-2: escrow lock is enforced by account constraints", () => {
     expect(source).to.include("constraint = escrow_state.status == EscrowStatus::Locked @ LendError::EscrowNotLocked");
     expect(source).to.include("constraint = escrow_state.borrower == borrower.key() @ LendError::InvalidScore");
+    expect(source).to.include("constraint = escrow_state.loan_id == pool_state.next_loan_id @ LendError::LoanIdMismatch");
   });
 
-  it("GATE-2: collateral floor is enforced on-chain for the MVP pair", () => {
+  it("GATE-2: collateral floor is enforced on-chain for the approved collateral mint", () => {
+    expect(source).to.include("ctx.accounts.escrow_state.collateral_mint == pool.collateral_mint");
     expect(source).to.include("pool.collateral_price_usdt_6 > 0");
     expect(source).to.include("price_age >= 0 && price_age <= pool.max_price_age_secs");
     expect(source).to.include("let collateral_value = compute_collateral_value_from_price_usdt_6(");
     expect(source).to.include("let minimum_collateral_value = (principal as u128)");
     expect(source).to.include("(collateral_value as u128) >= minimum_collateral_value");
+  });
+
+  it("Disbursement routes funds only to the borrower's canonical ATA", () => {
+    expect(source).to.include("constraint = borrower_ata.owner == borrower.key()");
+    expect(source).to.include("get_associated_token_address(&borrower.key(), &pool_state.token_mint)");
   });
 
   it("GATE-3: utilization cap is enforced before transfer", () => {
