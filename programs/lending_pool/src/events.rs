@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use crate::state::{LiquidationMode, LiquidationUrgency};
 
 #[event]
 pub struct PoolInitialized { pub pool: Pubkey, pub token_mint: Pubkey, pub authority: Pubkey }
@@ -30,3 +31,18 @@ pub struct CollateralReleased { pub loan_id: u64, pub borrower: Pubkey, pub amou
 pub struct CollateralLiquidated { pub loan_id: u64, pub amount: u64 }
 #[event]
 pub struct LoanDefaulted { pub loan_id: u64, pub borrower: Pubkey, pub outstanding: u64 }
+#[event]
+pub struct LiquidationIntentReady {
+    pub loan_id: u64,
+    pub pool: Pubkey,
+    pub borrower: Pubkey,
+    pub collateral_mint: Pubkey,
+    pub collateral_amount: u64,
+    pub debt_outstanding: u64,
+    pub minimum_recovery_target: u64,
+    pub liquidation_mode: LiquidationMode,
+    pub liquidation_urgency: LiquidationUrgency,
+    pub intent_expiry: i64,
+    pub nonce: u64,
+    pub target_chain_id: u64,
+}

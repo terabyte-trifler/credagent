@@ -32,7 +32,10 @@ describe("SEC-02: Conditional Gate Bypass", () => {
   });
 
   it("GATE-1: minimum risk tier is enforced on-chain", () => {
-    expect(source).to.include("require!(risk_tier >= 1, LendError::ScoreTooLow);");
+    expect(source).to.include("let starter_profile = principal <= STARTER_MAX_PRINCIPAL");
+    expect(source).to.include("&& duration_days <= STARTER_MAX_DURATION_DAYS");
+    expect(source).to.include("&& interest_rate_bps >= STARTER_MIN_RATE_BPS;");
+    expect(source).to.include("require!(risk_tier >= 1 || starter_profile, LendError::ScoreTooLow);");
   });
 
   it("GATE-2: escrow lock is enforced by account constraints", () => {

@@ -20,6 +20,10 @@ pub const MAX_UTILIZATION_BPS: u16 = 8000;        // 80%
 pub const MAX_INSTALLMENTS: u8 = 52;              // weekly for 1 year
 pub const BPS_DENOMINATOR: u128 = 10_000;
 pub const SECONDS_PER_YEAR: u128 = 31_536_000;
+pub const DEFAULT_INTENT_TTL_SECS: i64 = 1_800;   // 30 minutes
+pub const LIQUIDATION_PENALTY_BPS: u16 = 300;     // 3.0%
+pub const PROTOCOL_FEE_BPS: u16 = 50;             // 0.5%
+pub const EVM_TARGET_CHAIN_ID: u64 = 1;           // Ethereum mainnet semantics for MVP
 /// Precision multiplier for interest index (1e18)
 pub const PRECISION: u128 = 1_000_000_000_000_000_000;
 
@@ -31,6 +35,22 @@ pub enum LoanStatus { Active, Repaid, Defaulted, Liquidated }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, InitSpace)]
 pub enum EscrowStatus { Locked, Released, Liquidated }
+
+/// Cross-chain liquidation execution policy chosen at default time.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, InitSpace)]
+pub enum LiquidationMode {
+    Immediate,
+    Partial,
+    Urgent,
+}
+
+/// Severity hint used by the relayer and EVM config contract.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, InitSpace)]
+pub enum LiquidationUrgency {
+    Low,
+    Medium,
+    High,
+}
 
 // ═══════════════════════════════════════════
 // Accounts
@@ -160,6 +180,17 @@ pub fn compute_interest_owed(
         .checked_div(PRECISION)?;
     // AUDIT: Safe cast — interest should be << u64::MAX for reasonable loans
     u64::try_from(interest).ok()
+}
+
+/// Minimum stablecoin proceeds that must be recovered for the default intent.
+pub fn compute_minimum_recovery_target(debt_outstanding: u64) -> Option<u64> {
+    let retained_bps = BPS_DENOMINATOR
+        .checked_sub(LIQUIDATION_PENALTY_BPS as u128)?
+        .checked_sub(PROTOCOL_FEE_BPS as u128)?;
+    let recovery = (debt_outstanding as u128)
+        .checked_mul(retained_bps)?
+        .checked_div(BPS_DENOMINATOR)?;
+    u64::try_from(recovery).ok()
 }
 
 /// Pool utilization in basis points.

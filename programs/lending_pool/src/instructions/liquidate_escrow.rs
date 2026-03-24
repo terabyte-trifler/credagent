@@ -17,7 +17,13 @@ use crate::events::CollateralLiquidated;
 #[derive(Accounts)]
 pub struct LiquidateEscrow<'info> {
     #[account(
+        seeds = [POOL_SEED, pool_state.token_mint.as_ref()],
+        bump = pool_state.bump,
+    )]
+    pub pool_state: Account<'info, PoolState>,
+    #[account(
         constraint = loan.status == LoanStatus::Defaulted @ LendError::NotActive,
+        constraint = loan.pool == pool_state.key(),
         constraint = loan.escrow == escrow_state.key(),
     )]
     pub loan: Account<'info, Loan>,
@@ -35,7 +41,11 @@ pub struct LiquidateEscrow<'info> {
     /// Pool vault to receive liquidated collateral.
     /// NOTE: If collateral mint differs from pool mint, a swap step is needed.
     /// For MVP, we assume same-mint collateral or a separate liquidation vault.
-    #[account(mut)]
+    #[account(
+        mut,
+        constraint = liquidation_recipient.mint == escrow_state.collateral_mint @ LendError::MintMismatch,
+        constraint = liquidation_recipient.owner == pool_state.authority @ LendError::UnauthorizedAgent,
+    )]
     pub liquidation_recipient: Account<'info, TokenAccount>,
     /// Anyone can trigger (permissionless once loan is defaulted)
     pub payer: Signer<'info>,

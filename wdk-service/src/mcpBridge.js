@@ -572,10 +572,12 @@ export class MCPBridge {
     const loanSeed = Buffer.alloc(8);
     loanSeed.writeBigUInt64LE(BigInt(params.loan_id));
     const [loan] = PublicKey.findProgramAddressSync([Buffer.from('loan'), poolState.toBuffer(), loanSeed], program.programId);
+    const [escrowState] = PublicKey.findProgramAddressSync([Buffer.from('escrow'), loanSeed], program.programId);
 
     const txSig = await program.methods.markDefault().accountsStrict({
       poolState,
       loan,
+      escrowState,
       caller: signer.publicKey,
     }).signers([]).rpc();
 
@@ -625,6 +627,7 @@ export class MCPBridge {
     }
 
     const txSig = await program.methods.liquidateEscrow().accountsStrict({
+      poolState,
       loan,
       escrowState,
       escrowVault,

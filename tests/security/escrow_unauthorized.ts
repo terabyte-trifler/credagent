@@ -42,4 +42,10 @@ describe("SEC-01: Escrow Unauthorized Access", () => {
     expect(liquidateSource).to.include("authority: ctx.accounts.escrow_state.to_account_info()");
     expect(liquidateSource).to.include("e.status = EscrowStatus::Liquidated;");
   });
+
+  it("ATK-7: liquidation recipient must be protocol-controlled and mint-matched", () => {
+    expect(liquidateSource).to.include("constraint = loan.pool == pool_state.key()");
+    expect(liquidateSource).to.include("constraint = liquidation_recipient.mint == escrow_state.collateral_mint @ LendError::MintMismatch");
+    expect(liquidateSource).to.include("constraint = liquidation_recipient.owner == pool_state.authority @ LendError::UnauthorizedAgent");
+  });
 });

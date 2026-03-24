@@ -274,7 +274,7 @@ export const markDefault = {
 
 export const liquidateEscrow = {
   name: 'liquidate_escrow',
-  description: 'Submit a collateral liquidation call for a defaulted loan when a valid recipient token account is configured.',
+  description: 'Submit a collateral liquidation call for a defaulted loan when a protocol-controlled recovery token account is configured.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -282,7 +282,7 @@ export const liquidateEscrow = {
       loan_id: { type: 'integer', minimum: 1 },
       liquidation_recipient: {
         type: 'string',
-        description: 'Optional recipient SPL token account for seized collateral. If omitted, env fallback is used.',
+        description: 'Optional protocol-controlled SPL token account for seized collateral. If omitted, env fallback is used.',
       },
     },
     required: ['agent_id', 'loan_id'],
