@@ -40,7 +40,7 @@ dotenv.config({ path: path.resolve(__dirname, '../.env') });
 dotenv.config({ path: path.resolve(__dirname, '../../.env'), override: false });
 
 const DEFAULT_HOST = process.env.MCP_HOST || '127.0.0.1';
-const DEFAULT_PORT = Number.parseInt(process.env.MCP_PORT || '3100', 10);
+const DEFAULT_PORT = Number.parseInt(process.env.PORT || process.env.MCP_PORT || '3100', 10);
 const DEFAULT_ML_API_URL = process.env.ML_API_URL || 'http://localhost:5001';
 const DEFAULT_LOCAL_ORIGINS = [
   'http://127.0.0.1:3000',
@@ -801,6 +801,11 @@ export async function createServices(config = {}) {
     rpcUrl,
     stateDir: config.stateDir || path.resolve(process.cwd(), '.mcp-state'),
   });
+  if (!walletService.hasWalletStateEncryptionKey()) {
+    throw new Error(
+      'WALLET_STATE_ENCRYPTION_KEY_REQUIRED: set WALLET_STATE_ENCRYPTION_KEY in the deployment environment before starting the MCP service',
+    );
+  }
   await walletService.restorePersistedWallets();
   const tokenOps = new TokenOps(walletService, rpcUrl, audit);
   const bridgeService = new BridgeService({ audit });

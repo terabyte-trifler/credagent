@@ -76,6 +76,10 @@ export class WalletService {
     this.#walletStorePath = path.join(this.#config.stateDir, 'wallets.json');
   }
 
+  hasWalletStateEncryptionKey() {
+    return Boolean(this.#config.walletStateEncryptionKey);
+  }
+
   // ═══════════════════════════════════════
   // T1B.1 — Wallet Creation
   // ═══════════════════════════════════════
@@ -522,7 +526,9 @@ export class WalletService {
   #getWalletStateKey() {
     const secret = this.#config.walletStateEncryptionKey;
     if (!secret) {
-      throw new Error('WALLET_STATE_ENCRYPTION_KEY_REQUIRED: configure WALLET_STATE_ENCRYPTION_KEY before persisting agent wallets');
+      throw new Error(
+        'WALLET_STATE_ENCRYPTION_KEY_REQUIRED: configure WALLET_STATE_ENCRYPTION_KEY before persisting agent wallets (for Render, add it as an environment variable in the service settings)',
+      );
     }
     return createHash('sha256').update(secret).digest();
   }
