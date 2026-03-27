@@ -28,6 +28,10 @@ pub struct InitializePool<'info> {
 }
 
 pub fn handler(ctx: Context<InitializePool>, base_rate_bps: u16) -> Result<()> {
+    require!(
+        base_rate_bps > 0 && base_rate_bps <= MAX_INTEREST_RATE_BPS,
+        crate::errors::LendError::RateExceeded
+    );
     let pool_key = ctx.accounts.pool_state.key();
     let authority_key = ctx.accounts.authority.key();
     let token_mint_key = ctx.accounts.token_mint.key();

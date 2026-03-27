@@ -2376,6 +2376,7 @@ dependencies = [
  "agent-permissions",
  "anchor-lang",
  "anchor-spl",
+ "credit-score-oracle",
  "solana-program-test",
  "solana-sdk",
  "tokio",

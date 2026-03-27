@@ -46,3 +46,17 @@ pub struct LiquidationIntentReady {
     pub nonce: u64,
     pub target_chain_id: u64,
 }
+#[event]
+pub struct NextLoanIdUpdated {
+    pub pool: Pubkey,
+    pub old_next_loan_id: u64,
+    pub new_next_loan_id: u64,
+    pub authority: Pubkey,
+}
+#[event]
+pub struct CollateralPriceOracleUpdated {
+    pub pool: Pubkey,
+    pub old_oracle: Pubkey,
+    pub new_oracle: Pubkey,
+    pub authority: Pubkey,
+}

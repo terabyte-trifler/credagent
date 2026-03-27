@@ -54,4 +54,6 @@ pub enum LendError {
     CollateralPriceStale,
     #[msg("Collateral price is invalid")]
     InvalidCollateralPrice,
+    #[msg("Borrower SPL delegate approval is missing or insufficient")]
+    InstallmentDelegateMissing,
 }

@@ -20,6 +20,7 @@ idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 anchor-lang = "0.31.1"
 anchor-spl = "0.31.1"
 agent-permissions = { path = "../agent_permissions", features = ["cpi"] }
+credit-score-oracle = { path = "../credit_score_oracle", features = ["cpi"] }
 
 [dev-dependencies]
 solana-program-test = "=2.1.15"

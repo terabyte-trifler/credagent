@@ -26,6 +26,12 @@ pub enum OracleError {
     DidAlreadyRegistered,
     #[msg("Borrower address cannot be zero")]
     InvalidBorrower,
+    #[msg("Remaining accounts must match batch entries one-for-one")]
+    RemainingAccountsMismatch,
+    #[msg("Remaining score account does not match the expected PDA")]
+    InvalidScoreAccount,
+    #[msg("Batch score updates are disabled until PDA writes are fully implemented")]
+    BatchUpdateDisabled,
     #[msg("History authority cannot be the zero pubkey")]
     InvalidHistoryAuthority,
     #[msg("Only the configured history authority may record credit-history loan events")]

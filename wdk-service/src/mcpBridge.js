@@ -32,7 +32,6 @@ import {
   Token,
   TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
-  getAssociatedTokenAddressSync,
 } from '@solana/spl-token';
 
 const DEFAULT_ML_API = 'http://localhost:5001';
@@ -45,6 +44,16 @@ const NON_THROTTLED_TOOLS = new Set([
   'get_default_probability',
   'get_next_loan_id',
 ]);
+
+function deriveAssociatedTokenAddressSync(mint, owner) {
+  const mintPk = mint instanceof PublicKey ? mint : new PublicKey(mint);
+  const ownerPk = owner instanceof PublicKey ? owner : new PublicKey(owner);
+  const [ata] = PublicKey.findProgramAddressSync(
+    [ownerPk.toBuffer(), TOKEN_PROGRAM_ID.toBuffer(), mintPk.toBuffer()],
+    ASSOCIATED_TOKEN_PROGRAM_ID,
+  );
+  return ata;
+}
 
 export class MCPBridge {
   #walletService;
@@ -596,7 +605,15 @@ export class MCPBridge {
   }
 
   async #submitLiquidateEscrow(params) {
-    const signer = await this.#getAnchorWallet(params.agent_id);
+    let signer;
+    try {
+      signer = await this.#getAnchorWallet(params.agent_id);
+    } catch {
+      return this.#buildProgramCall('liquidate_escrow', {
+        ...params,
+        note: 'Collection signer unavailable in WDK wallet service',
+      });
+    }
     const program = this.#getProgram('lending_pool', signer);
     const tokenMint = new PublicKey(this.#requireEnv('MOCK_USDT_MINT'));
     const [poolState] = PublicKey.findProgramAddressSync([Buffer.from('pool'), tokenMint.toBuffer()], program.programId);
@@ -605,28 +622,36 @@ export class MCPBridge {
     const [loan] = PublicKey.findProgramAddressSync([Buffer.from('loan'), poolState.toBuffer(), loanSeed], program.programId);
     const [escrowState] = PublicKey.findProgramAddressSync([Buffer.from('escrow'), loanSeed], program.programId);
     const [escrowVault] = PublicKey.findProgramAddressSync([Buffer.from('escrow_vault'), loanSeed], program.programId);
-    const poolStateAccount = await program.account.poolState.fetch(poolState);
-    const escrowStateAccount = await program.account.escrowVaultState.fetch(escrowState);
-    const liquidationRecipientPk = getAssociatedTokenAddressSync(
-      escrowStateAccount.collateralMint,
-      poolStateAccount.authority,
-      true,
-    );
+    let liquidationRecipientPk;
+    try {
+      const poolStateAccount = await program.account.poolState.fetch(poolState);
+      const escrowStateAccount = await program.account.escrowVaultState.fetch(escrowState);
+      liquidationRecipientPk = deriveAssociatedTokenAddressSync(
+        escrowStateAccount.collateralMint,
+        poolStateAccount.authority,
+      );
 
-    const escrowVaultInfo = await program.provider.connection.getParsedAccountInfo(escrowVault, 'confirmed');
-    const recipientInfo = await program.provider.connection.getParsedAccountInfo(liquidationRecipientPk, 'confirmed');
-    const escrowMint = escrowVaultInfo.value?.data?.parsed?.info?.mint;
-    const recipientMint = recipientInfo.value?.data?.parsed?.info?.mint;
+      const escrowVaultInfo = await program.provider.connection.getParsedAccountInfo(escrowVault, 'confirmed');
+      const recipientInfo = await program.provider.connection.getParsedAccountInfo(liquidationRecipientPk, 'confirmed');
+      const escrowMint = escrowVaultInfo.value?.data?.parsed?.info?.mint;
+      const recipientMint = recipientInfo.value?.data?.parsed?.info?.mint;
 
-    if (!escrowMint || !recipientMint) {
+      if (!escrowMint || !recipientMint) {
+        return this.#buildProgramCall('liquidate_escrow', {
+          ...params,
+          liquidation_recipient: liquidationRecipientPk.toBase58(),
+          note: 'Protocol recovery ATA is not initialized for the collateral mint',
+        });
+      }
+      if (escrowMint !== recipientMint) {
+        throw new Error('INVALID_LIQUIDATION_RECIPIENT: token mint mismatch');
+      }
+    } catch (error) {
       return this.#buildProgramCall('liquidate_escrow', {
         ...params,
-        liquidation_recipient: liquidationRecipientPk.toBase58(),
-        note: 'Protocol recovery ATA is not initialized for the collateral mint',
+        liquidation_recipient: liquidationRecipientPk?.toBase58?.(),
+        note: `Protocol recovery ATA lookup unavailable: ${error.message || 'unknown error'}`,
       });
-    }
-    if (escrowMint !== recipientMint) {
-      throw new Error('INVALID_LIQUIDATION_RECIPIENT: token mint mismatch');
     }
 
     const txSig = await program.methods.liquidateEscrow().accountsStrict({

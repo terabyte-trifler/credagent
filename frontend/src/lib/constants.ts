@@ -33,7 +33,7 @@ export interface CreditResult {
   zk_proof?: {
     scheme: string;
     statement_hash: string;
-    features_hash: string;
+    features_hash?: string;
     commitment: string;
     announcement: string;
     response_w: string;

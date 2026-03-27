@@ -1,5 +1,6 @@
 use anchor_lang::prelude::*;
 use crate::errors::LendError;
+use crate::events::{CollateralPriceOracleUpdated, NextLoanIdUpdated};
 use crate::state::*;
 
 #[derive(Accounts)]
@@ -19,8 +20,14 @@ pub fn handler_set_next_loan_id(ctx: Context<SetNextLoanId>, new_next_loan_id: u
 
     let pool = &mut ctx.accounts.pool_state;
     require!(new_next_loan_id >= pool.next_loan_id, LendError::LoanIdMismatch);
-
+    let old_next_loan_id = pool.next_loan_id;
     pool.next_loan_id = new_next_loan_id;
+    emit!(NextLoanIdUpdated {
+        pool: pool.key(),
+        old_next_loan_id,
+        new_next_loan_id,
+        authority: ctx.accounts.authority.key(),
+    });
     Ok(())
 }
 
@@ -41,7 +48,14 @@ pub struct SetCollateralPriceOracle<'info> {
 pub fn handler_set_collateral_price_oracle(
     ctx: Context<SetCollateralPriceOracle>,
 ) -> Result<()> {
+    let old_oracle = ctx.accounts.pool_state.collateral_price_oracle;
     ctx.accounts.pool_state.collateral_price_oracle = ctx.accounts.new_oracle.key();
+    emit!(CollateralPriceOracleUpdated {
+        pool: ctx.accounts.pool_state.key(),
+        old_oracle,
+        new_oracle: ctx.accounts.new_oracle.key(),
+        authority: ctx.accounts.authority.key(),
+    });
     Ok(())
 }
 

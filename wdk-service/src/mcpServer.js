@@ -673,6 +673,15 @@ function loadKeypairFromFile(walletPath) {
   return Keypair.fromSecretKey(secretKey);
 }
 
+function isNonFatalPermissionsBootstrapError(error) {
+  const message = String(error?.message || error || '');
+  return (
+    message.includes('insufficient funds for rent')
+    || message.includes('Attempt to debit an account but found no record of a prior credit')
+    || message.includes('SendTransactionError')
+  );
+}
+
 async function ensureAgentPermissionsRuntime(walletService) {
   const idlPath = resolveIdlPath('agent_permissions.json');
 
@@ -838,15 +847,30 @@ export async function createServices(config = {}) {
     );
   }
 
-  await ensureAgentPermissionsRuntime(walletService);
-  audit.log(
-    'permissions_runtime_ready',
-    'system',
-    {},
-    'Agent permissions runtime initialized',
-    0,
-    'success',
-  );
+  try {
+    await ensureAgentPermissionsRuntime(walletService);
+    audit.log(
+      'permissions_runtime_ready',
+      'system',
+      {},
+      'Agent permissions runtime initialized',
+      0,
+      'success',
+    );
+  } catch (error) {
+    if (!isNonFatalPermissionsBootstrapError(error)) {
+      throw error;
+    }
+    audit.log(
+      'permissions_runtime_degraded',
+      'system',
+      { reason: 'bootstrap_funding' },
+      `Agent permissions bootstrap skipped: ${String(error?.message || error).slice(0, 180)}`,
+      0,
+      'warning',
+    );
+    console.warn('[mcp] permissions runtime degraded:', error?.message || error);
+  }
   await poolHistory.init();
   audit.log(
     'pool_history_ready',

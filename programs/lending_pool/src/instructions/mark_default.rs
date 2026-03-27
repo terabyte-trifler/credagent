@@ -64,11 +64,11 @@ pub fn handler(ctx: Context<MarkDefault>) -> Result<()> {
 
     // Update pool
     let p = &mut ctx.accounts.pool_state;
-    p.total_borrowed = p.total_borrowed.saturating_sub(loan.principal);
+    p.total_borrowed = p.total_borrowed.checked_sub(loan.principal).ok_or(LendError::Overflow)?;
     p.total_defaults = p.total_defaults
         .checked_add(debt_outstanding)
         .ok_or(LendError::Overflow)?;
-    p.active_loans = p.active_loans.saturating_sub(1);
+    p.active_loans = p.active_loans.checked_sub(1).ok_or(LendError::Overflow)?;
 
     emit!(LoanDefaulted {
         loan_id: loan.loan_id, borrower: loan.borrower, outstanding: debt_outstanding,

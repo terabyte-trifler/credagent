@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import secrets
 from typing import Dict, Tuple
 
 from ecdsa import curves, ellipticcurve
@@ -115,26 +116,14 @@ def generate_zk_proof(address: str, score: int, computed_at: int, model_hash: st
     """
     Generate a real zero-knowledge proof of knowledge for a hidden credit witness.
     """
-    witness, features_hash = _feature_witness(features)
+    witness, _ = _feature_witness(features)
     statement_hash = _public_statement_hash(address, score, computed_at, model_hash)
 
-    blind = _hash_to_scalar(
-        b"CredAgentZK:blind",
-        statement_hash.encode("utf-8"),
-        features_hash.encode("utf-8"),
-    )
+    blind = _hash_to_scalar(b"CredAgentZK:blind", secrets.token_bytes(32))
     commitment = witness * _GENERATOR + blind * _H_GENERATOR
 
-    nonce_w = _hash_to_scalar(
-        b"CredAgentZK:nonce:w",
-        statement_hash.encode("utf-8"),
-        features_hash.encode("utf-8"),
-    )
-    nonce_r = _hash_to_scalar(
-        b"CredAgentZK:nonce:r",
-        statement_hash.encode("utf-8"),
-        features_hash.encode("utf-8"),
-    )
+    nonce_w = _hash_to_scalar(b"CredAgentZK:nonce:w", secrets.token_bytes(32))
+    nonce_r = _hash_to_scalar(b"CredAgentZK:nonce:r", secrets.token_bytes(32))
     announcement = nonce_w * _GENERATOR + nonce_r * _H_GENERATOR
 
     challenge = _hash_to_scalar(
@@ -150,7 +139,6 @@ def generate_zk_proof(address: str, score: int, computed_at: int, model_hash: st
     proof = {
         "scheme": "pedersen-schnorr-secp256k1-v1",
         "statement_hash": statement_hash,
-        "features_hash": features_hash,
         "commitment": _point_to_bytes(commitment).hex(),
         "announcement": _point_to_bytes(announcement).hex(),
         "response_w": f"{response_w:064x}",
@@ -193,7 +181,6 @@ def verify_zk_proof(proof: Dict[str, str], address: str, score: int, computed_at
                 {
                     "scheme": proof["scheme"],
                     "statement_hash": proof["statement_hash"],
-                    "features_hash": proof["features_hash"],
                     "commitment": proof["commitment"],
                     "announcement": proof["announcement"],
                     "response_w": proof["response_w"],
