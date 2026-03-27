@@ -24,6 +24,7 @@ pub struct CreateSchedule<'info> {
     #[account(
         mut,
         constraint = loan.status == LoanStatus::Active @ LendError::NotActive,
+        constraint = loan.lending_agent == lending_agent.key() @ LendError::UnauthorizedAgent,
     )]
     pub loan: Account<'info, Loan>,
     #[account(
@@ -47,6 +48,10 @@ pub fn handler_create(
 ) -> Result<()> {
     require!(num_installments > 0 && num_installments <= MAX_INSTALLMENTS, LendError::TooManyInstallments);
     require!(interval_secs > 0, LendError::ZeroAmount);
+    require!(
+        ctx.accounts.loan.schedule == Pubkey::default(),
+        LendError::ScheduleComplete
+    );
 
     let loan = &ctx.accounts.loan;
 

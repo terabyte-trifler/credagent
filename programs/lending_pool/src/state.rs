@@ -20,6 +20,12 @@ pub const MAX_UTILIZATION_BPS: u16 = 8000;        // 80%
 pub const MAX_INSTALLMENTS: u8 = 52;              // weekly for 1 year
 pub const BPS_DENOMINATOR: u128 = 10_000;
 pub const SECONDS_PER_YEAR: u128 = 31_536_000;
+pub const DEFAULT_INTENT_TTL_SECS: i64 = 1_800;   // 30 minutes
+pub const LIQUIDATION_PENALTY_BPS: u16 = 300;     // 3.0%
+pub const PROTOCOL_FEE_BPS: u16 = 50;             // 0.5%
+pub const EVM_TARGET_CHAIN_ID: u64 = 1;           // Ethereum mainnet semantics for MVP
+pub const MIN_COLLATERAL_RATIO_BPS: u16 = 15_000; // 150%
+pub const DEFAULT_PRICE_MAX_AGE_SECS: i64 = 3_600; // 1 hour
 /// Precision multiplier for interest index (1e18)
 pub const PRECISION: u128 = 1_000_000_000_000_000_000;
 
@@ -32,6 +38,20 @@ pub enum LoanStatus { Active, Repaid, Defaulted, Liquidated }
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, InitSpace)]
 pub enum EscrowStatus { Locked, Released, Liquidated }
 
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, InitSpace)]
+pub enum LiquidationMode {
+    Immediate,
+    Partial,
+    Urgent,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, InitSpace)]
+pub enum LiquidationUrgency {
+    Low,
+    Medium,
+    High,
+}
+
 // ═══════════════════════════════════════════
 // Accounts
 // ═══════════════════════════════════════════
@@ -42,7 +62,9 @@ pub enum EscrowStatus { Locked, Released, Liquidated }
 #[derive(InitSpace)]
 pub struct PoolState {
     pub authority: Pubkey,
+    pub collateral_price_oracle: Pubkey,
     pub token_mint: Pubkey,
+    pub collateral_mint: Pubkey,
     pub total_deposited: u64,
     pub total_borrowed: u64,
     pub total_interest_earned: u64,
@@ -52,6 +74,9 @@ pub struct PoolState {
     pub next_loan_id: u64,
     pub base_rate_bps: u16,
     pub max_utilization_bps: u16,
+    pub collateral_price_usdt_6: u64,
+    pub collateral_price_updated_at: i64,
+    pub max_price_age_secs: i64,
     /// Cumulative interest index (scaled by PRECISION=1e18)
     pub interest_index: u128,
     pub last_update_ts: i64,
@@ -160,6 +185,26 @@ pub fn compute_interest_owed(
         .checked_div(PRECISION)?;
     // AUDIT: Safe cast — interest should be << u64::MAX for reasonable loans
     u64::try_from(interest).ok()
+}
+
+pub fn compute_minimum_recovery_target(debt_outstanding: u64) -> Option<u64> {
+    let retained_bps = BPS_DENOMINATOR
+        .checked_sub(LIQUIDATION_PENALTY_BPS as u128)?
+        .checked_sub(PROTOCOL_FEE_BPS as u128)?;
+    let recovery = (debt_outstanding as u128)
+        .checked_mul(retained_bps)?
+        .checked_div(BPS_DENOMINATOR)?;
+    u64::try_from(recovery).ok()
+}
+
+pub fn compute_collateral_value_from_price_usdt_6(
+    collateral_amount: u64,
+    collateral_price_usdt_6: u64,
+) -> Option<u64> {
+    let value = (collateral_amount as u128)
+        .checked_mul(collateral_price_usdt_6 as u128)?
+        .checked_div(1_000_000)?;
+    u64::try_from(value).ok()
 }
 
 /// Pool utilization in basis points.

@@ -73,7 +73,10 @@ pub fn handler_withdraw(ctx: Context<Withdraw>, amount: u64) -> Result<()> {
     let pool_state_info = ctx.accounts.pool_state.to_account_info();
     let p = &mut ctx.accounts.pool_state;
 
-    let available = p.total_deposited.checked_sub(p.total_borrowed).ok_or(LendError::Overflow)?;
+    let available = p
+        .total_deposited
+        .checked_sub(p.total_borrowed)
+        .ok_or(LendError::Overflow)?;
     require!(amount <= available, LendError::InsufficientLiquidity);
 
     // PDA signer seeds for pool_state (vault authority)

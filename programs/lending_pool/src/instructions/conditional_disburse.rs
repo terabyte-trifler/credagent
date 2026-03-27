@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use anchor_spl::associated_token::get_associated_token_address;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 use agent_permissions::{self, AgentIdentity, AgentRole, PermState, PermissionTier};
 use credit_score_oracle::{program::CreditScoreOracle, state::CreditScore};
@@ -62,6 +63,7 @@ pub struct ConditionalDisburse<'info> {
         mut,
         constraint = escrow_state.borrower == borrower.key() @ LendError::InvalidScore,
         constraint = escrow_state.status == EscrowStatus::Locked @ LendError::EscrowNotLocked,
+        constraint = escrow_state.loan_id == pool_state.next_loan_id @ LendError::LoanIdMismatch,
     )]
     pub escrow_state: Account<'info, EscrowVaultState>,
 
@@ -77,6 +79,8 @@ pub struct ConditionalDisburse<'info> {
     #[account(
         mut,
         constraint = borrower_ata.mint == pool_state.token_mint @ LendError::MintMismatch,
+        constraint = borrower_ata.owner == borrower.key(),
+        constraint = borrower_ata.key() == get_associated_token_address(&borrower.key(), &pool_state.token_mint) @ LendError::UnauthorizedAgent,
     )]
     pub borrower_ata: Account<'info, TokenAccount>,
 
@@ -151,6 +155,34 @@ pub fn handler(
     //   escrow_state.borrower == borrower.key()
     require!(
         ctx.accounts.escrow_state.collateral_amount > 0,
+        LendError::InsufficientCollateral
+    );
+    require!(
+        ctx.accounts.escrow_state.collateral_mint == pool.collateral_mint,
+        LendError::MintMismatch
+    );
+    require!(
+        pool.collateral_price_usdt_6 > 0,
+        LendError::InvalidCollateralPrice
+    );
+    let price_age = now
+        .checked_sub(pool.collateral_price_updated_at)
+        .ok_or(LendError::Overflow)?;
+    require!(
+        price_age >= 0 && price_age <= pool.max_price_age_secs,
+        LendError::CollateralPriceStale
+    );
+    let collateral_value = compute_collateral_value_from_price_usdt_6(
+        ctx.accounts.escrow_state.collateral_amount,
+        pool.collateral_price_usdt_6,
+    )
+        .ok_or(LendError::Overflow)?;
+    let minimum_collateral_value = (principal as u128)
+        .checked_mul(MIN_COLLATERAL_RATIO_BPS as u128)
+        .and_then(|v| v.checked_div(BPS_DENOMINATOR))
+        .ok_or(LendError::Overflow)?;
+    require!(
+        (collateral_value as u128) >= minimum_collateral_value,
         LendError::InsufficientCollateral
     );
 
