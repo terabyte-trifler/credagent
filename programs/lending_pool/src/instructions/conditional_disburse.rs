@@ -1,6 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 use agent_permissions::{self, AgentIdentity, AgentRole, PermState, PermissionTier};
+use credit_score_oracle::{program::CreditScoreOracle, state::CreditScore};
 use crate::state::*;
 use crate::errors::LendError;
 use crate::events::LoanDisbursed;
@@ -49,15 +50,12 @@ pub struct ConditionalDisburse<'info> {
     pub pool_vault: Account<'info, TokenAccount>,
 
     /// The credit score PDA for the borrower (GATE 1)
-    /// CHECK: Validated by seeds constraint below — we read fields manually
-    /// because this is a cross-program account (credit_score_oracle).
-    /// In production, use CPI or IDL import for type safety.
     #[account(
         seeds = [b"credit_score", borrower.key().as_ref()],
         bump,
         seeds::program = credit_oracle_program.key(),
     )]
-    pub credit_score_account: UncheckedAccount<'info>,
+    pub credit_score_account: Account<'info, CreditScore>,
 
     /// The escrow state PDA for this loan (GATE 2)
     #[account(
@@ -104,8 +102,7 @@ pub struct ConditionalDisburse<'info> {
     )]
     pub agent_identity: Account<'info, AgentIdentity>,
 
-    /// CHECK: Credit oracle program for cross-program PDA derivation.
-    pub credit_oracle_program: UncheckedAccount<'info>,
+    pub credit_oracle_program: Program<'info, CreditScoreOracle>,
 
     pub agent_permissions_program: Program<'info, agent_permissions::program::AgentPermissions>,
 
@@ -137,20 +134,14 @@ pub fn handler(
     // ════════════════════════════════════
     // GATE 1: Valid credit score (not expired, tier >= BB)
     // ════════════════════════════════════
-    // Read score from cross-program PDA data
-    let score_data = ctx.accounts.credit_score_account.try_borrow_data()?;
-    // Skip 8-byte discriminator, then: borrower(32) + score(2) + confidence(1) + risk_tier(1) + timestamp(8) + expires_at(8)
-    require!(score_data.len() >= 60, LendError::InvalidScore);
-    let score = u16::from_le_bytes([score_data[40], score_data[41]]);
-    let risk_tier = score_data[43];
-    let expires_at = i64::from_le_bytes(score_data[52..60].try_into().unwrap());
-
-    require!(expires_at > now, LendError::InvalidScore);
+    let credit_score = &ctx.accounts.credit_score_account;
+    require!(credit_score.borrower == ctx.accounts.borrower.key(), LendError::InvalidScore);
+    require!(credit_score.expires_at > now, LendError::InvalidScore);
 
     let starter_profile = principal <= STARTER_MAX_PRINCIPAL
         && duration_days <= STARTER_MAX_DURATION_DAYS
         && interest_rate_bps >= STARTER_MIN_RATE_BPS;
-    require!(risk_tier >= 1 || starter_profile, LendError::ScoreTooLow);
+    require!(credit_score.risk_tier >= 1 || starter_profile, LendError::ScoreTooLow);
 
     // ════════════════════════════════════
     // GATE 2: Collateral locked in escrow

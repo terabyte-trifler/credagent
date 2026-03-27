@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::program_option::COption;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 use crate::state::*;
 use crate::errors::LendError;
@@ -129,6 +130,7 @@ pub struct PullInstallment<'info> {
     #[account(
         mut,
         constraint = borrower_ata.mint == pool_state.token_mint @ LendError::MintMismatch,
+        constraint = borrower_ata.owner == loan.borrower @ LendError::UnauthorizedAgent,
     )]
     pub borrower_ata: Account<'info, TokenAccount>,
     /// Collection agent authorized to pull installments
@@ -153,6 +155,15 @@ pub fn handler_pull(ctx: Context<PullInstallment>) -> Result<()> {
     require!(s.paid_installments < s.total_installments, LendError::ScheduleComplete);
 
     let is_last = s.paid_installments + 1 == s.total_installments;
+
+    require!(
+        ctx.accounts.borrower_ata.delegate == COption::Some(ctx.accounts.collection_agent.key()),
+        LendError::InstallmentDelegateMissing
+    );
+    require!(
+        ctx.accounts.borrower_ata.delegated_amount > 0,
+        LendError::InstallmentDelegateMissing
+    );
 
     // Last installment sweeps remaining loan balance
     let pull_amount = if is_last {
@@ -194,12 +205,12 @@ pub fn handler_pull(ctx: Context<PullInstallment>) -> Result<()> {
     if s.paid_installments >= s.total_installments {
         loan.status = LoanStatus::Repaid;
         let p = &mut ctx.accounts.pool_state;
-        p.total_borrowed = p.total_borrowed.saturating_sub(loan.principal);
-        let interest_earned = loan.repaid_amount.saturating_sub(loan.principal);
+        p.total_borrowed = p.total_borrowed.checked_sub(loan.principal).ok_or(LendError::Overflow)?;
+        let interest_earned = loan.repaid_amount.checked_sub(loan.principal).ok_or(LendError::Overflow)?;
         p.total_interest_earned = p.total_interest_earned
             .checked_add(interest_earned)
             .ok_or(LendError::Overflow)?;
-        p.active_loans = p.active_loans.saturating_sub(1);
+        p.active_loans = p.active_loans.checked_sub(1).ok_or(LendError::Overflow)?;
     }
 
     emit!(InstallmentPulled {

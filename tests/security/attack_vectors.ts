@@ -7,6 +7,10 @@ const conditionalDisbursePath = path.join(
   ROOT,
   "programs/lending_pool/src/instructions/conditional_disburse.rs",
 );
+const initializePoolPath = path.join(
+  ROOT,
+  "programs/lending_pool/src/instructions/initialize_pool.rs",
+);
 const safetyMiddlewarePath = path.join(
   ROOT,
   "wdk-service/src/safetyMiddleware.js",
@@ -28,16 +32,36 @@ describe("SEC-02: Conditional Gate Bypass", () => {
   const source = fs.readFileSync(conditionalDisbursePath, "utf8");
 
   it("GATE-1: credit score expiry is enforced on-chain", () => {
-    expect(source).to.include("require!(expires_at > now, LendError::InvalidScore);");
+    expect(source).to.include("pub credit_score_account: Account<'info, CreditScore>");
+    expect(source).to.include("pub credit_oracle_program: Program<'info, CreditScoreOracle>");
+    expect(source).to.include("require!(credit_score.expires_at > now, LendError::InvalidScore);");
   });
 
   it("GATE-1: minimum risk tier is enforced on-chain", () => {
-    expect(source).to.include("require!(risk_tier >= 1, LendError::ScoreTooLow);");
+    expect(source).to.include("let starter_profile = principal <= STARTER_MAX_PRINCIPAL");
+    expect(source).to.include("&& duration_days <= STARTER_MAX_DURATION_DAYS");
+    expect(source).to.include("&& interest_rate_bps >= STARTER_MIN_RATE_BPS;");
+    expect(source).to.include("require!(credit_score.risk_tier >= 1 || starter_profile, LendError::ScoreTooLow);");
   });
 
   it("GATE-2: escrow lock is enforced by account constraints", () => {
     expect(source).to.include("constraint = escrow_state.status == EscrowStatus::Locked @ LendError::EscrowNotLocked");
     expect(source).to.include("constraint = escrow_state.borrower == borrower.key() @ LendError::InvalidScore");
+    expect(source).to.include("constraint = escrow_state.loan_id == pool_state.next_loan_id @ LendError::LoanIdMismatch");
+  });
+
+  it("GATE-2: collateral floor is enforced on-chain for the approved collateral mint", () => {
+    expect(source).to.include("ctx.accounts.escrow_state.collateral_mint == pool.collateral_mint");
+    expect(source).to.include("pool.collateral_price_usdt_6 > 0");
+    expect(source).to.include("price_age >= 0 && price_age <= pool.max_price_age_secs");
+    expect(source).to.include("let collateral_value = compute_collateral_value_from_price_usdt_6(");
+    expect(source).to.include("let minimum_collateral_value = (principal as u128)");
+    expect(source).to.include("(collateral_value as u128) >= minimum_collateral_value");
+  });
+
+  it("Disbursement routes funds only to the borrower's canonical ATA", () => {
+    expect(source).to.include("constraint = borrower_ata.owner == borrower.key()");
+    expect(source).to.include("get_associated_token_address(&borrower.key(), &pool_state.token_mint)");
   });
 
   it("GATE-3: utilization cap is enforced before transfer", () => {
@@ -57,6 +81,16 @@ describe("SEC-02: Conditional Gate Bypass", () => {
     expect(gate4Index).to.be.greaterThan(-1);
     expect(transferIndex).to.be.greaterThan(-1);
     expect(gate4Index).to.be.lessThan(transferIndex);
+  });
+});
+
+describe("SEC-02B: Oracle Bootstrap Safety", () => {
+  const source = fs.readFileSync(initializePoolPath, "utf8");
+
+  it("initialize_pool starts with no seeded collateral price", () => {
+    expect(source).to.include("p.collateral_price_usdt_6 = 0;");
+    expect(source).to.include("p.collateral_price_updated_at = 0;");
+    expect(source).to.not.include("DEFAULT_XAUT_PRICE_USDT_6");
   });
 });
 

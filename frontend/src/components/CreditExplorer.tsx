@@ -92,7 +92,6 @@ function ProofDetails({ result }: { result: CreditResult }) {
       <div className="grid grid-cols-1 gap-2">
         <ProofField label="Proof Hash" value={result.zk_proof_hash} />
         <ProofField label="Statement Hash" value={result.zk_proof?.statement_hash} />
-        <ProofField label="Features Hash" value={result.zk_proof?.features_hash} />
         <ProofField label="Commitment" value={result.zk_proof?.commitment} />
       </div>
     </div>

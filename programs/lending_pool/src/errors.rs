@@ -50,4 +50,10 @@ pub enum LendError {
     LoanIdMismatch,
     #[msg("Agent is not authorized for this operation")]
     UnauthorizedAgent,
+    #[msg("Collateral price is stale")]
+    CollateralPriceStale,
+    #[msg("Collateral price is invalid")]
+    InvalidCollateralPrice,
+    #[msg("Borrower SPL delegate approval is missing or insufficient")]
+    InstallmentDelegateMissing,
 }

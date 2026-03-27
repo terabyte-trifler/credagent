@@ -22,6 +22,7 @@ import { AuditLog } from './auditLog.js';
 import { generate24WordSeedPhrase } from './seedPhrase.js';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import 'dotenv/config';
 
 // ═══════════════════════════════════════════
@@ -66,6 +67,10 @@ export class WalletService {
       transferMaxFee:   Number(config.transferMaxFee || process.env.WDK_TRANSFER_MAX_FEE || DEFAULT_MAX_FEE),
       rateLimitPerHour: config.rateLimitPerHour || DEFAULT_RATE_LIMIT,
       stateDir:         config.stateDir         || path.resolve(process.cwd(), '.mcp-state'),
+      walletStateEncryptionKey:
+        config.walletStateEncryptionKey
+          || process.env.WALLET_STATE_ENCRYPTION_KEY
+          || (process.env.NODE_ENV === 'test' ? 'test-only-wallet-state-key' : ''),
     });
     this.#audit = new AuditLog();
     this.#walletStorePath = path.join(this.#config.stateDir, 'wallets.json');
@@ -431,13 +436,14 @@ export class WalletService {
     const restored = [];
 
     for (const entry of wallets) {
-      if (!entry?.agentId || !entry?.seed) continue;
+      if (!entry?.agentId) continue;
       if (this.#agents.has(entry.agentId)) continue;
 
       validate.agentId(entry.agentId);
-      const record = await this.#instantiateWalletRecord(entry.agentId, entry.seed, entry.createdAt || Date.now());
+      const seed = this.#restoreSeed(entry);
+      const record = await this.#instantiateWalletRecord(entry.agentId, seed, entry.createdAt || Date.now());
       this.#agents.set(entry.agentId, record);
-      this.#seeds.set(entry.agentId, entry.seed);
+      this.#seeds.set(entry.agentId, seed);
       restored.push({ agentId: entry.agentId, address: record.address });
     }
 
@@ -500,12 +506,63 @@ export class WalletService {
 
   async #persistWallets() {
     await mkdir(this.#config.stateDir, { recursive: true });
-    const wallets = Array.from(this.#seeds.entries()).map(([agentId, seed]) => ({
-      agentId,
-      seed,
-      createdAt: this.#agents.get(agentId)?.createdAt || Date.now(),
-    }));
+    const wallets = Array.from(this.#seeds.entries()).map(([agentId, seed]) => {
+      const encrypted = this.#encryptSeed(seed);
+      return {
+        agentId,
+        seedCiphertext: encrypted.ciphertext,
+        seedIv: encrypted.iv,
+        seedTag: encrypted.tag,
+        createdAt: this.#agents.get(agentId)?.createdAt || Date.now(),
+      };
+    });
     await writeFile(this.#walletStorePath, JSON.stringify({ wallets }, null, 2), 'utf8');
+  }
+
+  #getWalletStateKey() {
+    const secret = this.#config.walletStateEncryptionKey;
+    if (!secret) {
+      throw new Error('WALLET_STATE_ENCRYPTION_KEY_REQUIRED: configure WALLET_STATE_ENCRYPTION_KEY before persisting agent wallets');
+    }
+    return createHash('sha256').update(secret).digest();
+  }
+
+  #encryptSeed(seed) {
+    const iv = randomBytes(12);
+    const key = this.#getWalletStateKey();
+    const cipher = createCipheriv('aes-256-gcm', key, iv);
+    const ciphertext = Buffer.concat([cipher.update(seed, 'utf8'), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    return {
+      ciphertext: ciphertext.toString('base64'),
+      iv: iv.toString('base64'),
+      tag: tag.toString('base64'),
+    };
+  }
+
+  #decryptSeed(ciphertext, iv, tag) {
+    const key = this.#getWalletStateKey();
+    const decipher = createDecipheriv(
+      'aes-256-gcm',
+      key,
+      Buffer.from(iv, 'base64'),
+    );
+    decipher.setAuthTag(Buffer.from(tag, 'base64'));
+    const plaintext = Buffer.concat([
+      decipher.update(Buffer.from(ciphertext, 'base64')),
+      decipher.final(),
+    ]);
+    return plaintext.toString('utf8');
+  }
+
+  #restoreSeed(entry) {
+    if (entry.seedCiphertext && entry.seedIv && entry.seedTag) {
+      return this.#decryptSeed(entry.seedCiphertext, entry.seedIv, entry.seedTag);
+    }
+    if (entry.seed) {
+      return entry.seed;
+    }
+    throw new Error(`WALLET_STATE_CORRUPT: missing encrypted seed material for agent "${entry.agentId}"`);
   }
 
   /** AUDIT[S8]: Sliding window rate limiter per agent. */

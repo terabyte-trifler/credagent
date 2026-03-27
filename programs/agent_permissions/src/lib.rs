@@ -145,6 +145,8 @@ pub struct AdminRotationCancelled { pub admin: Pubkey, pub timestamp: i64 }
 pub struct SystemPaused { pub admin: Pubkey, pub timestamp: i64 }
 #[event]
 pub struct SystemUnpaused { pub admin: Pubkey, pub timestamp: i64 }
+#[event]
+pub struct DailyLimitUpdated { pub admin: Pubkey, pub agent: Pubkey, pub old_limit: u64, pub new_limit: u64 }
 
 // ═══════════════════════════════════════════
 // Program
@@ -421,7 +423,14 @@ pub mod agent_permissions {
 
     pub fn set_daily_limit(ctx: Context<UpdateAgent>, new_limit: u64) -> Result<()> {
         require!(new_limit > 0, PermError::InvalidLimit);
+        let old_limit = ctx.accounts.agent_identity.daily_limit;
         ctx.accounts.agent_identity.daily_limit = new_limit;
+        emit!(DailyLimitUpdated {
+            admin: ctx.accounts.admin.key(),
+            agent: ctx.accounts.agent_identity.wallet,
+            old_limit,
+            new_limit,
+        });
         Ok(())
     }
 

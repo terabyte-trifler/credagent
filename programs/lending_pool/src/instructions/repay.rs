@@ -78,12 +78,12 @@ pub fn handler(ctx: Context<Repay>, amount: u64) -> Result<()> {
         loan.status = LoanStatus::Repaid;
 
         let p = &mut ctx.accounts.pool_state;
-        p.total_borrowed = p.total_borrowed.saturating_sub(loan.principal);
-        let interest_earned = loan.repaid_amount.saturating_sub(loan.principal);
+        p.total_borrowed = p.total_borrowed.checked_sub(loan.principal).ok_or(LendError::Overflow)?;
+        let interest_earned = loan.repaid_amount.checked_sub(loan.principal).ok_or(LendError::Overflow)?;
         p.total_interest_earned = p.total_interest_earned
             .checked_add(interest_earned)
             .ok_or(LendError::Overflow)?;
-        p.active_loans = p.active_loans.saturating_sub(1);
+        p.active_loans = p.active_loans.checked_sub(1).ok_or(LendError::Overflow)?;
 
         emit!(LoanFullyRepaid {
             loan_id: loan.loan_id, borrower: loan.borrower,

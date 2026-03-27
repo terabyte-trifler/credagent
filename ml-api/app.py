@@ -67,8 +67,8 @@ load_dotenv()
 
 app = Flask(__name__)
 
-# SECURITY: Restrict CORS in production
-cors_origins = os.getenv("CORS_ORIGINS", "*")
+# SECURITY: Restrict CORS by default. Production must opt into explicit origins.
+cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
 CORS(app, origins=cors_origins.split(","))
 
 # Rate limiting (simple sliding window)
@@ -76,6 +76,7 @@ _rate_buckets = defaultdict(list)
 RATE_LIMIT = int(os.getenv("RATE_LIMIT_PER_MIN", "100"))
 MAX_BATCH = 20
 FEATURE_MODE = os.getenv("FEATURE_MODE", "auto")
+TRUST_PROXY_HEADERS = os.getenv("TRUST_PROXY_HEADERS", "false").lower() == "true"
 
 
 def rate_limit(f):
@@ -85,7 +86,7 @@ def rate_limit(f):
     """
     @wraps(f)
     def wrapper(*args, **kwargs):
-        ip = request.remote_addr or "unknown"
+        ip = get_client_ip()
         now = time.time()
         bucket = _rate_buckets[ip]
         # Evict entries older than 60s
@@ -95,6 +96,21 @@ def rate_limit(f):
         _rate_buckets[ip].append(now)
         return f(*args, **kwargs)
     return wrapper
+
+
+def get_client_ip() -> str:
+    """
+    Prefer the left-most forwarded IP when explicitly running behind a trusted proxy.
+    """
+    if TRUST_PROXY_HEADERS:
+        forwarded = request.headers.get("X-Forwarded-For", "")
+        if forwarded:
+            first_hop = forwarded.split(",")[0].strip()
+            if first_hop:
+                return first_hop
+    if request.access_route:
+        return request.access_route[0]
+    return request.remote_addr or "unknown"
 
 
 def error_response(msg: str, code: int = 400):
